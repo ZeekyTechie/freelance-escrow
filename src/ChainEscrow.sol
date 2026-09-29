@@ -45,6 +45,33 @@ contract ChainEscrow is IChainEscrow {
         uint256 indexed projectId,
         uint256 amount
 );
+
+    // Emitted when a freelancer submits completed work
+    event WorkSubmitted(
+        uint256 indexed projectId,
+        address indexed freelancer
+);
+
+    // Emitted when a client approves submitted work
+    event WorkApproved(
+        uint256 indexed projectId,
+        address indexed client
+);
+
+    // Emitted when escrow funds are released to the freelancer
+event PaymentReleased(
+    uint256 indexed projectId,
+    address indexed freelancer,
+    uint256 amount
+);
+
+// Emitted when escrow funds are refunded to the client
+event RefundIssued(
+    uint256 indexed projectId,
+    address indexed client,
+    uint256 amount
+);
+
     // ============================================
     // PROJECT MANAGEMENT
     // ============================================
@@ -181,6 +208,222 @@ function fundProject(
     emit ProjectFunded(
         _projectId,
         msg.value
+    );
+}
+
+    // Allows the assigned freelancer to submit completed work
+function submitWork(
+    uint256 _projectId
+) public {
+
+    ProjectTypes.Project storage project =
+        s_projects[_projectId];
+
+    // Ensure project exists
+    require(
+        project.id != 0,
+        "Project does not exist"
+    );
+
+    // Ensure only assigned freelancer can submit work
+    require(
+        msg.sender == project.freelancer,
+        "Only assigned freelancer can submit work"
+    );
+
+    // Ensure project has been funded
+    require(
+        project.status ==
+            ProjectTypes.ProjectStatus.Funded,
+        "Project must be funded first"
+    );
+
+    // Move project to submitted state
+    project.status =
+        ProjectTypes.ProjectStatus.Submitted;
+
+    // Record submission on-chain
+    emit WorkSubmitted(
+        _projectId,
+        msg.sender
+    );
+}
+
+// Allows the client to approve submitted work
+function approveWork(
+    uint256 _projectId
+) public {
+
+    ProjectTypes.Project storage project =
+        s_projects[_projectId];
+
+    // Ensure project exists
+    require(
+        project.id != 0,
+        "Project does not exist"
+    );
+
+    // Ensure only the client can approve work
+    require(
+        msg.sender == project.client,
+        "Only client can approve work"
+    );
+
+    // Ensure work has been submitted
+    require(
+        project.status ==
+            ProjectTypes.ProjectStatus.Submitted,
+        "Work has not been submitted"
+    );
+
+    // Move project into completed state
+    project.status =
+        ProjectTypes.ProjectStatus.Completed;
+
+    // Record approval on-chain
+    emit WorkApproved(
+        _projectId,
+        msg.sender
+    );
+}
+
+// Returns the current project counter
+function getProjectCount()
+    public
+    view
+    returns (uint256)
+{
+    return s_projectCounter;
+}
+
+// Returns the ETH currently held in escrow for a project
+function getEscrowBalance(
+    uint256 _projectId
+)
+    public
+    view
+    returns (uint256)
+{
+    return s_projectFunds[_projectId];
+}
+
+
+// Releases escrow funds to the freelancer
+function releasePayment(
+    uint256 _projectId
+) public {
+
+    ProjectTypes.Project storage project =
+        s_projects[_projectId];
+
+    // Ensure project exists
+    require(
+        project.id != 0,
+        "Project does not exist"
+    );
+
+    // Ensure only the client can release payment
+    require(
+        msg.sender == project.client,
+        "Only client can release payment"
+    );
+
+    // Ensure project has been approved
+    require(
+        project.status ==
+            ProjectTypes.ProjectStatus.Completed,
+        "Project not approved"
+    );
+
+    // Get escrow amount
+    uint256 paymentAmount =
+        s_projectFunds[_projectId];
+
+    // Prevent double payment
+    require(
+        paymentAmount > 0,
+        "No funds available"
+    );
+
+    // Clear escrow balance before sending ETH
+    s_projectFunds[_projectId] = 0;
+
+    // Send ETH to freelancer
+    (bool success, ) =
+        payable(project.freelancer).call{
+            value: paymentAmount
+        }("");
+
+    require(
+        success,
+        "Payment transfer failed"
+    );
+
+    emit PaymentReleased(
+        _projectId,
+        project.freelancer,
+        paymentAmount
+    );
+}
+
+// Allows the client to reclaim escrow funds
+// if work has not been submitted yet
+function refundClient(
+    uint256 _projectId
+) public {
+
+    ProjectTypes.Project storage project =
+        s_projects[_projectId];
+
+    // Ensure project exists
+    require(
+        project.id != 0,
+        "Project does not exist"
+    );
+
+    // Only the client can request a refund
+    require(
+        msg.sender == project.client,
+        "Only client can request refund"
+    );
+
+    // Refund only allowed while project is funded
+    require(
+        project.status ==
+            ProjectTypes.ProjectStatus.Funded,
+        "Refund not available"
+    );
+
+    uint256 refundAmount =
+        s_projectFunds[_projectId];
+
+    require(
+        refundAmount > 0,
+        "No funds available"
+    );
+
+    // Clear escrow balance first
+    s_projectFunds[_projectId] = 0;
+
+    // Mark project as cancelled
+    project.status =
+        ProjectTypes.ProjectStatus.Cancelled;
+
+    // Return ETH to client
+    (bool success, ) =
+        payable(project.client).call{
+            value: refundAmount
+        }("");
+
+    require(
+        success,
+        "Refund transfer failed"
+    );
+
+    emit RefundIssued(
+        _projectId,
+        project.client,
+        refundAmount
     );
 }
 }
