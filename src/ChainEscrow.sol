@@ -1,124 +1,186 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-contract ChainEscrow {
+import {ProjectTypes} from "./types/ProjectTypes.sol";
+import {EscrowErrors} from "./errors/EscrowErrors.sol";
+import {IChainEscrow} from "./interfaces/IChainEscrow.sol";
 
-// Represents the different stages a project can be in
-    enum ProjectStatus {
-        Open,
-        Funded,
-        Accepted,
-        Submitted,
-        Completed,
-        Cancelled
+contract ChainEscrow is IChainEscrow {
+
+    // ============================================
+    // STATE VARIABLES
+    // ============================================
+
+    // Generates unique IDs so every project
+    // can be identified and retrieved later
+    uint256 private s_projectCounter;
+
+    // Stores projects using their ID as the key
+    mapping(uint256 => ProjectTypes.Project)
+        private s_projects;
+
+    // Tracks how much ETH has been deposited for each project
+    mapping(uint256 => uint256)
+        private s_projectFunds;
+
+    // ============================================
+    // EVENTS
+    // ============================================
+
+    // Emitted whenever a new project is created
+    event ProjectCreated(
+        uint256 indexed projectId,
+        address indexed client,
+        uint256 budget
+    );
+
+    // Emitted when a freelancer accepts a project
+    event ProjectAccepted(
+        uint256 indexed projectId,
+        address indexed freelancer
+    );
+
+    // Emitted when project funds are deposited into escrow
+    event ProjectFunded(
+        uint256 indexed projectId,
+        uint256 amount
+);
+    // ============================================
+    // PROJECT MANAGEMENT
+    // ============================================
+
+    // Allows a client to create a new freelance project
+    function createProject(
+        string memory _title,
+        string memory _description,
+        uint256 _budget,
+        uint256 _deadline
+    ) public override {
+
+        // Generate a new unique project ID
+        s_projectCounter++;
+
+        // Store project details on-chain
+        s_projects[s_projectCounter] = ProjectTypes.Project({
+            id: s_projectCounter,
+            client: msg.sender,
+            freelancer: address(0),
+            title: _title,
+            description: _description,
+            budget: _budget,
+            deadline: _deadline,
+            status: ProjectTypes.ProjectStatus.Open
+        });
+
+        // Notify the blockchain that a project was created
+        emit ProjectCreated(
+            s_projectCounter,
+            msg.sender,
+            _budget
+        );
     }
 
-// Stores all important information about a freelance project
-struct Project {
-    uint256 id;
-    address client;
-    address freelancer;
-    string title;
-    string description;
-    uint256 budget;
-    uint256 deadline;
-    ProjectStatus status;
-}
+    // Returns details of a specific project
+    function getProject(
+        uint256 _projectId
+    )
+        public
+        view
+        returns (ProjectTypes.Project memory)
+    {
+        return s_projects[_projectId];
+    }
 
-// Generates unique IDs so every project can be identified and retrieved later
-uint256 private s_projectCounter;
-
-// Stores projects using their project ID as the key
-mapping(uint256 => Project) private s_projects;
-
-// Allows a client to create a new freelance project
-function createProject(
-    string memory _title,
-    string memory _description,
-    uint256 _budget,
-    uint256 _deadline
-) public {
-
-    // Generate a new unique project ID
-    s_projectCounter++;
-
-    // Store the project in our mapping
-    s_projects[s_projectCounter] = Project({
-        id: s_projectCounter,
-        client: msg.sender,
-        freelancer: address(0),
-        title: _title,
-        description: _description,
-        budget: _budget,
-        deadline: _deadline,
-        status: ProjectStatus.Open
-    });
-
-    // Notify the blockchain that a project was created
-emit ProjectCreated(
-    s_projectCounter,
-    msg.sender,
-    _budget
-);
-
-}
-
-// Returns the details of a specific project
-function getProject(
+// Returns the amount of escrowed funds for a project
+function getProjectFunds(
     uint256 _projectId
 )
     public
     view
-    returns (Project memory)
+    returns (uint256)
 {
-    return s_projects[_projectId];
+    return s_projectFunds[_projectId];
 }
 
-// Emitted whenever a new project is created
-event ProjectCreated(
-    uint256 indexed projectId,
-    address indexed client,
-    uint256 budget
-);
+    // Allows a freelancer to accept an available project
+    function acceptProject(
+        uint256 _projectId
+    ) public {
 
+        ProjectTypes.Project storage project =
+            s_projects[_projectId];
 
+        // Ensure project exists
+        require(
+            project.id != 0,
+            "Project does not exist"
+        );
 
-// Emitted when a freelancer accepts a project
-event ProjectAccepted(
-    uint256 indexed projectId,
-    address indexed freelancer
-);
+        // Ensure project is still open
+        require(
+            project.status ==
+                ProjectTypes.ProjectStatus.Open,
+            "Project is not open"
+        );
 
-// Allows a freelancer to accept an available project
-function acceptProject(
+        // Assign freelancer to project
+        project.freelancer = msg.sender;
+
+        // Move project into Accepted state
+        project.status =
+            ProjectTypes.ProjectStatus.Accepted;
+
+        // Record acceptance on-chain
+        emit ProjectAccepted(
+            _projectId,
+            msg.sender
+        );
+    }
+
+    // Allows the client to deposit funds into escrow
+function fundProject(
     uint256 _projectId
-) public {
+) public payable {
 
-    Project storage project =
+    ProjectTypes.Project storage project =
         s_projects[_projectId];
 
-    // Ensure the project exists
+    // Ensure project exists
     require(
         project.id != 0,
         "Project does not exist"
     );
 
-    // Ensure the project is still open
+    // Ensure only the client can fund the project
     require(
-        project.status == ProjectStatus.Open,
-        "Project is not open"
+        msg.sender == project.client,
+        "Only client can fund project"
     );
 
-    // Assign the freelancer
-    project.freelancer = msg.sender;
+    // Ensure freelancer has already accepted
+    require(
+        project.status ==
+            ProjectTypes.ProjectStatus.Accepted,
+        "Project must be accepted first"
+    );
+
+    // Ensure correct amount of ETH is sent
+    require(
+        msg.value == project.budget,
+        "Incorrect funding amount"
+    );
+
+    // Store escrow balance
+    s_projectFunds[_projectId] = msg.value;
 
     // Update project status
-    project.status = ProjectStatus.Accepted;
+    project.status =
+        ProjectTypes.ProjectStatus.Funded;
 
-    // Record acceptance on the blockchain
-    emit ProjectAccepted(
+    // Notify blockchain that funds were deposited
+    emit ProjectFunded(
         _projectId,
-        msg.sender
+        msg.value
     );
 }
 }
