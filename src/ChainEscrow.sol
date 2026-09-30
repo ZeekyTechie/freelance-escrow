@@ -1,11 +1,20 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
+
 import {ProjectTypes} from "./types/ProjectTypes.sol";
 import {EscrowErrors} from "./errors/EscrowErrors.sol";
 import {IChainEscrow} from "./interfaces/IChainEscrow.sol";
+import {MilestoneTypes} from "./types/MilestoneTypes.sol";
+import {MilestoneErrors} from "./errors/MilestoneErrors.sol";
+import {EscrowConstants} from "./constants/EscrowConstants.sol";
 
-contract ChainEscrow is IChainEscrow {
+import "../lib/openzeppelin-contracts/contracts/utils/ReentrancyGuard.sol";
+contract ChainEscrow is IChainEscrow, ReentrancyGuard {
+
+constructor() {
+    s_owner = msg.sender;
+}
 
     // ============================================
     // STATE VARIABLES
@@ -15,6 +24,8 @@ contract ChainEscrow is IChainEscrow {
     // can be identified and retrieved later
     uint256 private s_projectCounter;
 
+    // Platform owner
+address private s_owner;
     // Stores projects using their ID as the key
     mapping(uint256 => ProjectTypes.Project)
         private s_projects;
@@ -22,6 +33,23 @@ contract ChainEscrow is IChainEscrow {
     // Tracks how much ETH has been deposited for each project
     mapping(uint256 => uint256)
         private s_projectFunds;
+
+    // Stores milestones for each project
+    mapping(
+        uint256 =>
+            mapping(uint256 => MilestoneTypes.Milestone)
+    ) private s_milestones;
+
+    // Generates unique milestone IDs
+    mapping(uint256 => uint256)
+        private s_milestoneCounter;
+
+    // Tracks the total value of milestones created for each project
+    mapping(uint256 => uint256)
+        private s_totalMilestoneAmount;
+
+    // Stores fees collected by the platform
+    uint256 private s_platformBalance;
 
     // ============================================
     // EVENTS
@@ -59,16 +87,47 @@ contract ChainEscrow is IChainEscrow {
 );
 
     // Emitted when escrow funds are released to the freelancer
-event PaymentReleased(
-    uint256 indexed projectId,
-    address indexed freelancer,
-    uint256 amount
+    event PaymentReleased(
+        uint256 indexed projectId,
+        address indexed freelancer,
+        uint256 amount
 );
 
-// Emitted when escrow funds are refunded to the client
-event RefundIssued(
-    uint256 indexed projectId,
-    address indexed client,
+    // Emitted when escrow funds are refunded to the client
+    event RefundIssued(
+        uint256 indexed projectId,
+        address indexed client,
+        uint256 amount
+);
+
+    // Emitted whenever a milestone is created
+    event MilestoneCreated(
+        uint256 indexed projectId,
+        uint256 indexed milestoneId,
+        uint256 amount
+);
+
+    // Emitted when a milestone is submitted by the freelancer
+    event MilestoneSubmitted(
+        uint256 indexed projectId,
+        uint256 indexed milestoneId
+);
+
+    // Emitted when a client approves a submitted milestone
+    event MilestoneApproved(
+        uint256 indexed projectId,
+        uint256 indexed milestoneId
+);
+
+    // Emitted when a milestone payment is released
+    event MilestonePaid(
+        uint256 indexed projectId,
+        uint256 indexed milestoneId,
+        uint256 amount
+);
+
+    event PlatformFeesWithdrawn(
+    address indexed owner,
     uint256 amount
 );
 
@@ -106,6 +165,217 @@ event RefundIssued(
             _budget
         );
     }
+
+    // Allows the project client to create milestones
+function createMilestone(
+    uint256 _projectId,
+    string memory _title,
+    uint256 _amount
+) public {
+
+    ProjectTypes.Project storage project =
+        s_projects[_projectId];
+
+    // Ensure project exists
+    require(
+        project.id != 0,
+        "Project does not exist"
+    );
+
+    // Ensure only project creator can add milestones
+    require(
+        msg.sender == project.client,
+        "Only project client can create milestones"
+    );
+
+    // Ensure milestone total does not exceed project budget
+    if (
+        s_totalMilestoneAmount[_projectId] +
+        _amount >
+        project.budget
+    ) {
+        revert MilestoneErrors.MilestoneBudgetExceeded();
+    }
+    // Increment milestone counter for this project
+    s_milestoneCounter[_projectId]++;
+
+    uint256 milestoneId =
+        s_milestoneCounter[_projectId];
+
+    // Store milestone
+    s_milestones[_projectId][milestoneId] =
+        MilestoneTypes.Milestone({
+            id: milestoneId,
+            title: _title,
+            amount: _amount,
+            status:
+                MilestoneTypes.MilestoneStatus.Pending
+        });
+
+    // Update total milestone allocation
+s_totalMilestoneAmount[_projectId] +=
+    _amount;
+
+    emit MilestoneCreated(
+        _projectId,
+        milestoneId,
+        _amount
+    );
+}
+
+// Allows the assigned freelancer to submit a milestone
+function submitMilestone(
+    uint256 _projectId,
+    uint256 _milestoneId
+) public {
+
+    ProjectTypes.Project storage project =
+        s_projects[_projectId];
+
+    MilestoneTypes.Milestone storage milestone =
+        s_milestones[_projectId][_milestoneId];
+
+    // Ensure milestone exists
+    if (milestone.id == 0) {
+        revert MilestoneErrors.MilestoneDoesNotExist();
+    }
+
+    // Ensure only assigned freelancer can submit
+    if (msg.sender != project.freelancer) {
+        revert MilestoneErrors.NotAssignedFreelancer();
+    }
+
+    // Milestone must still be pending
+    if (
+        milestone.status !=
+        MilestoneTypes.MilestoneStatus.Pending
+    ) {
+        revert MilestoneErrors.MilestoneNotPending();
+    }
+
+    // Update milestone status
+    milestone.status =
+        MilestoneTypes.MilestoneStatus.Submitted;
+
+    emit MilestoneSubmitted(
+        _projectId,
+        _milestoneId
+    );
+}
+
+// Allows the client to approve a submitted milestone
+function approveMilestone(
+    uint256 _projectId,
+    uint256 _milestoneId
+) public {
+
+    ProjectTypes.Project storage project =
+        s_projects[_projectId];
+
+    MilestoneTypes.Milestone storage milestone =
+        s_milestones[_projectId][_milestoneId];
+
+    // Ensure milestone exists
+    if (milestone.id == 0) {
+        revert MilestoneErrors.MilestoneDoesNotExist();
+    }
+
+    // Ensure only project client can approve
+    if (msg.sender != project.client) {
+        revert MilestoneErrors.NotProjectClient();
+    }
+
+    // Milestone must be submitted first
+    if (
+        milestone.status !=
+        MilestoneTypes.MilestoneStatus.Submitted
+    ) {
+        revert MilestoneErrors.MilestoneNotSubmitted();
+    }
+
+    // Update status
+    milestone.status =
+        MilestoneTypes.MilestoneStatus.Approved;
+
+    emit MilestoneApproved(
+        _projectId,
+        _milestoneId
+    );
+}
+
+// Releases payment for an approved milestone
+function payMilestone(
+    uint256 _projectId,
+    uint256 _milestoneId
+) public nonReentrant {
+
+    ProjectTypes.Project storage project =
+        s_projects[_projectId];
+
+    MilestoneTypes.Milestone storage milestone =
+        s_milestones[_projectId][_milestoneId];
+
+    // Ensure milestone exists
+    if (milestone.id == 0) {
+        revert MilestoneErrors.MilestoneDoesNotExist();
+    }
+
+    // Only the client can authorize payment
+    if (msg.sender != project.client) {
+        revert MilestoneErrors.NotProjectClient();
+    }
+
+    // Milestone must be approved
+    if (
+        milestone.status !=
+        MilestoneTypes.MilestoneStatus.Approved
+    ) {
+        revert MilestoneErrors.MilestoneNotSubmitted();
+    }
+
+    // Ensure project has enough escrowed funds
+    require(
+        s_projectFunds[_projectId] >= milestone.amount,
+        "Insufficient escrow balance"
+    );
+
+    // Calculate platform fee
+uint256 platformFee =
+    (milestone.amount *
+        EscrowConstants.PLATFORM_FEE) / 100;
+
+// Calculate freelancer payout
+uint256 freelancerPayment =
+    milestone.amount - platformFee;
+
+// Deduct milestone amount from escrow
+s_projectFunds[_projectId] -=
+    milestone.amount;
+
+// Store platform fee
+s_platformBalance += platformFee;
+
+// Mark milestone as paid
+milestone.status =
+    MilestoneTypes.MilestoneStatus.Paid;
+
+// Send freelancer's share
+(bool success, ) =
+    payable(project.freelancer).call{
+        value: freelancerPayment
+    }("");
+
+require(
+    success,
+    "Milestone payment failed"
+);
+
+    emit MilestonePaid(
+        _projectId,
+        _milestoneId,
+        milestone.amount
+    );
+}
 
     // Returns details of a specific project
     function getProject(
@@ -211,6 +481,15 @@ function fundProject(
     );
 }
 
+// Returns the total fees collected by the platform
+function getPlatformBalance()
+    public
+    view
+    returns (uint256)
+{
+    return s_platformBalance;
+}
+
     // Allows the assigned freelancer to submit completed work
 function submitWork(
     uint256 _projectId
@@ -287,6 +566,7 @@ function approveWork(
     );
 }
 
+//Getter Functions
 // Returns the current project counter
 function getProjectCount()
     public
@@ -307,11 +587,84 @@ function getEscrowBalance(
     return s_projectFunds[_projectId];
 }
 
+// Returns details of a milestone
+// Each project can contain multiple milestones.
+// The first key is the project ID.
+// The second key is the milestone ID.
+function getMilestone(
+    uint256 _projectId,
+    uint256 _milestoneId
+)
+    public
+    view
+    returns (MilestoneTypes.Milestone memory)
+{
+    return
+        s_milestones[
+            _projectId
+        ][
+            _milestoneId
+        ];
+}
+
+// Returns the number of milestones in a project
+function getMilestoneCount(
+    uint256 _projectId
+)
+    public
+    view
+    returns (uint256)
+{
+    return s_milestoneCounter[_projectId];
+}
+
+function getOwner()
+    public
+    view
+    returns (address)
+{
+    return s_owner;
+}
+
+function withdrawPlatformFees()
+    public
+    nonReentrant
+{
+    require(
+        msg.sender == s_owner,
+        "Only owner can withdraw"
+    );
+
+    uint256 amount =
+        s_platformBalance;
+
+    require(
+        amount > 0,
+        "No fees available"
+    );
+
+    s_platformBalance = 0;
+
+    (bool success, ) =
+        payable(s_owner).call{
+            value: amount
+        }("");
+
+    require(
+        success,
+        "Withdrawal failed"
+    );
+
+    emit PlatformFeesWithdrawn(
+        s_owner,
+        amount
+    );
+}
 
 // Releases escrow funds to the freelancer
 function releasePayment(
     uint256 _projectId
-) public {
+) public nonReentrant {
 
     ProjectTypes.Project storage project =
         s_projects[_projectId];
@@ -370,7 +723,7 @@ function releasePayment(
 // if work has not been submitted yet
 function refundClient(
     uint256 _projectId
-) public {
+) public nonReentrant {
 
     ProjectTypes.Project storage project =
         s_projects[_projectId];
