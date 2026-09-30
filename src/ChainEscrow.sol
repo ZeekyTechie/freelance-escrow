@@ -8,9 +8,13 @@ import {IChainEscrow} from "./interfaces/IChainEscrow.sol";
 import {MilestoneTypes} from "./types/MilestoneTypes.sol";
 import {MilestoneErrors} from "./errors/MilestoneErrors.sol";
 import {EscrowConstants} from "./constants/EscrowConstants.sol";
+import {EscrowEvents} from "./events/EscrowEvents.sol";
 
 import "../lib/openzeppelin-contracts/contracts/utils/ReentrancyGuard.sol";
-contract ChainEscrow is IChainEscrow, ReentrancyGuard {
+contract ChainEscrow is
+    IChainEscrow,
+    EscrowEvents,
+    ReentrancyGuard {
 
 constructor() {
     s_owner = msg.sender;
@@ -50,86 +54,6 @@ address private s_owner;
 
     // Stores fees collected by the platform
     uint256 private s_platformBalance;
-
-    // ============================================
-    // EVENTS
-    // ============================================
-
-    // Emitted whenever a new project is created
-    event ProjectCreated(
-        uint256 indexed projectId,
-        address indexed client,
-        uint256 budget
-    );
-
-    // Emitted when a freelancer accepts a project
-    event ProjectAccepted(
-        uint256 indexed projectId,
-        address indexed freelancer
-    );
-
-    // Emitted when project funds are deposited into escrow
-    event ProjectFunded(
-        uint256 indexed projectId,
-        uint256 amount
-);
-
-    // Emitted when a freelancer submits completed work
-    event WorkSubmitted(
-        uint256 indexed projectId,
-        address indexed freelancer
-);
-
-    // Emitted when a client approves submitted work
-    event WorkApproved(
-        uint256 indexed projectId,
-        address indexed client
-);
-
-    // Emitted when escrow funds are released to the freelancer
-    event PaymentReleased(
-        uint256 indexed projectId,
-        address indexed freelancer,
-        uint256 amount
-);
-
-    // Emitted when escrow funds are refunded to the client
-    event RefundIssued(
-        uint256 indexed projectId,
-        address indexed client,
-        uint256 amount
-);
-
-    // Emitted whenever a milestone is created
-    event MilestoneCreated(
-        uint256 indexed projectId,
-        uint256 indexed milestoneId,
-        uint256 amount
-);
-
-    // Emitted when a milestone is submitted by the freelancer
-    event MilestoneSubmitted(
-        uint256 indexed projectId,
-        uint256 indexed milestoneId
-);
-
-    // Emitted when a client approves a submitted milestone
-    event MilestoneApproved(
-        uint256 indexed projectId,
-        uint256 indexed milestoneId
-);
-
-    // Emitted when a milestone payment is released
-    event MilestonePaid(
-        uint256 indexed projectId,
-        uint256 indexed milestoneId,
-        uint256 amount
-);
-
-    event PlatformFeesWithdrawn(
-    address indexed owner,
-    uint256 amount
-);
 
     // ============================================
     // PROJECT MANAGEMENT
