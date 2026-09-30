@@ -4,36 +4,59 @@ pragma solidity ^0.8.24;
 import {ProjectTypes} from "./types/ProjectTypes.sol";
 import {EscrowErrors} from "./errors/EscrowErrors.sol";
 import {IChainEscrow} from "./interfaces/IChainEscrow.sol";
+import {MilestoneTypes} from "./types/MilestoneTypes.sol";
+import {MilestoneErrors} from "./errors/MilestoneErrors.sol";
+import {EscrowConstants} from "./constants/EscrowConstants.sol";
+import {EscrowEvents} from "./events/EscrowEvents.sol";
 
-contract ChainEscrow {
+import "../lib/openzeppelin-contracts/contracts/utils/ReentrancyGuard.sol";
+contract ChainEscrow is
+    IChainEscrow,
+    EscrowEvents,
+    ReentrancyGuard {
 
-// Represents the different stages a project can be in
-    enum ProjectStatus {
-        Open,
-        Funded,
-        Accepted,
-        Submitted,
-        Completed,
-        Cancelled
-    }
-
-// Stores all important information about a freelance project
-struct Project {
-    uint256 id;
-    address client;
-    address freelancer;
-    string title;
-    string description;
-    uint256 budget;
-    uint256 deadline;
-    ProjectStatus status;
+constructor() {
+    s_owner = msg.sender;
 }
 
-// Generates unique IDs so every project can be identified and retrieved later
-uint256 private s_projectCounter;
+    // ============================================
+    // STATE VARIABLES
+    // ============================================
 
-// Stores projects using their project ID as the key
-mapping(uint256 => Project) private s_projects;
+    // Generates unique IDs so every project
+    // can be identified and retrieved later
+    uint256 private s_projectCounter;
+
+    // Platform owner
+address private s_owner;
+    // Stores projects using their ID as the key
+    mapping(uint256 => ProjectTypes.Project)
+        private s_projects;
+
+    // Tracks how much ETH has been deposited for each project
+    mapping(uint256 => uint256)
+        private s_projectFunds;
+
+    // Stores milestones for each project
+    mapping(
+        uint256 =>
+            mapping(uint256 => MilestoneTypes.Milestone)
+    ) private s_milestones;
+
+    // Generates unique milestone IDs
+    mapping(uint256 => uint256)
+        private s_milestoneCounter;
+
+    // Tracks the total value of milestones created for each project
+    mapping(uint256 => uint256)
+        private s_totalMilestoneAmount;
+
+    // Stores fees collected by the platform
+    uint256 private s_platformBalance;
+
+    // ============================================
+    // PROJECT MANAGEMENT
+    // ============================================
 
 // Allows a client to create a new freelance project
 function createProject(
