@@ -35,9 +35,9 @@ interface IChainEscrow is EscrowEvents {
 
     function refundClient(uint256 _projectId) external;
 
-    // =================================
+    // ================================
     // MILESTONE FUNCTIONS
-    // =========================
+    // ========================
 
     function createMilestone(
         uint256 _projectId,
@@ -59,7 +59,7 @@ interface IChainEscrow is EscrowEvents {
 
     // =================================
     // VIEW FUNCTIONS
-    // =========================
+    // ========================
 
     function getProject(uint256 _projectId) external view returns (ProjectTypes.Project memory);
 
