@@ -3,61 +3,42 @@ pragma solidity ^0.8.24;
 
 
 import {ProjectTypes} from "./types/ProjectTypes.sol";
-import {EscrowErrors} from "./errors/EscrowErrors.sol";
+import {EscrowErrors} from "./errors/EscrowErrors.sol";  
 import {IChainEscrow} from "./interfaces/IChainEscrow.sol";
 import {MilestoneTypes} from "./types/MilestoneTypes.sol";
 import {MilestoneErrors} from "./errors/MilestoneErrors.sol";
 import {EscrowConstants} from "./constants/EscrowConstants.sol";
-import {EscrowEvents} from "./events/EscrowEvents.sol";
+// import {EscrowEvents} from "./events/EscrowEvents.sol";  // NOt use, so it's useless importing it here, I added it inside the Interfaces
 
-import "../lib/openzeppelin-contracts/contracts/utils/ReentrancyGuard.sol";
-contract ChainEscrow is
-    IChainEscrow,
-    EscrowEvents,
-    ReentrancyGuard {
-
-constructor() {
-    s_owner = msg.sender;
-}
+import {ReentrancyGuard} from "../lib/openzeppelin-contracts/contracts/utils/ReentrancyGuard.sol";
+contract ChainEscrow is IChainEscrow, ReentrancyGuard {
 
     // ============================================
     // STATE VARIABLES
+    // =========================
+
+    uint256 private s_projectCounter; // Generates unique IDs so every project
+    address private s_owner;     // Platform owner
+    mapping(uint256 => ProjectTypes.Project) private s_projects;
+    mapping(uint256 => uint256) private s_projectFunds; // Tracks how much ETH has been deposited for each project
+    mapping(uint256 =>
+        mapping(uint256 => MilestoneTypes.Milestone)
+    ) private s_milestones; // Stores milestones for each project
+    mapping(uint256 => uint256) private s_milestoneCounter; // Generates unique milestone IDs
+    mapping(uint256 => uint256) private s_totalMilestoneAmount; // Tracks the total value of milestones created for each project
+    mapping(uint256 => uint256) private s_paidMilestoneCount;
+    uint256 private s_platformBalance;  // // Stores fees collected by the platform
+
     // ============================================
-
-    // Generates unique IDs so every project
-    // can be identified and retrieved later
-    uint256 private s_projectCounter;
-
-    // Platform owner
-address private s_owner;
-    // Stores projects using their ID as the key
-    mapping(uint256 => ProjectTypes.Project)
-        private s_projects;
-
-    // Tracks how much ETH has been deposited for each project
-    mapping(uint256 => uint256)
-        private s_projectFunds;
-
-    // Stores milestones for each project
-    mapping(
-        uint256 =>
-            mapping(uint256 => MilestoneTypes.Milestone)
-    ) private s_milestones;
-
-    // Generates unique milestone IDs
-    mapping(uint256 => uint256)
-        private s_milestoneCounter;
-
-    // Tracks the total value of milestones created for each project
-    mapping(uint256 => uint256)
-        private s_totalMilestoneAmount;
-
-    // Stores fees collected by the platform
-    uint256 private s_platformBalance;
+    // CONSTRUCTOR
+    // ===================
+    constructor() {
+        s_owner = msg.sender;
+    }
 
     // ============================================
     // PROJECT MANAGEMENT
-    // ============================================
+    // =========================
 
     // Allows a client to create a new freelance project
     function createProject(
@@ -67,8 +48,7 @@ address private s_owner;
         uint256 _deadline
     ) public override {
 
-        // Generate a new unique project ID
-        s_projectCounter++;
+        s_projectCounter++; // Generate a new unique project ID
 
         // Store project details on-chain
         s_projects[s_projectCounter] = ProjectTypes.Project({
@@ -83,624 +63,287 @@ address private s_owner;
         });
 
         // Notify the blockchain that a project was created
-        emit ProjectCreated(
-            s_projectCounter,
-            msg.sender,
-            _budget
-        );
+        emit ProjectCreated(s_projectCounter, msg.sender, _budget);
     }
+
+        // Allows the client to deposit funds into escrow
+    function fundProject( uint256 _projectId) public payable override {
+
+        ProjectTypes.Project storage project = s_projects[_projectId];
+
+        // Ensure project exists
+        if (project.id == 0) revert EscrowErrors.ProjectDoesNotExist();
+
+        if (msg.sender != project.client) revert EscrowErrors.NotProjectClient(); // Ensure only the client can fund the project
+
+        if (project.status != ProjectTypes.ProjectStatus.Open) revert EscrowErrors.InvalidStatus(); // Ensure freelancer has already accepted
+
+        if (msg.value != project.budget) revert EscrowErrors.IncorrectFundingAmount();  // Ensure correct amount of ETH is sent
+
+        // Store escrow balance
+        s_projectFunds[_projectId] = msg.value;
+
+        project.status = ProjectTypes.ProjectStatus.Funded; // Update project status
+
+        // Notify blockchain that funds were deposited
+        emit ProjectFunded(_projectId, msg.value);
+    }
+
+    // ======= Accapting Project By Freelancer
+    function acceptProject(uint256 _projectId) public override {
+        ProjectTypes.Project storage project = s_projects[_projectId];
+
+        if (project.id == 0) revert EscrowErrors.ProjectDoesNotExist();
+        if (project.status != ProjectTypes.ProjectStatus.Funded) {
+            revert EscrowErrors.ProjectNotFunded();
+        }
+
+        project.freelancer = msg.sender;
+        project.status = ProjectTypes.ProjectStatus.Accepted;
+
+        emit ProjectAccepted(_projectId, msg.sender);
+    }
+
+    // Allows the assigned freelancer to submit completed work
+    function submitWork(uint256 _projectId) public override {
+        ProjectTypes.Project storage project = s_projects[_projectId];
+
+        if (project.id == 0) revert EscrowErrors.ProjectDoesNotExist();
+        if (msg.sender != project.freelancer) revert EscrowErrors.NotProjectFreelancer();
+        if (project.status != ProjectTypes.ProjectStatus.Accepted) revert EscrowErrors.InvalidStatus();
+
+        project.status = ProjectTypes.ProjectStatus.Submitted; // moving the project to submitted state
+
+        emit WorkSubmitted(_projectId, msg.sender); // record submission on-chain
+    }
+
+    // Allows the client to approve submitted work
+    function approveWork(uint256 _projectId) public override {
+        ProjectTypes.Project storage project = s_projects[_projectId];
+
+        if (project.id == 0) revert EscrowErrors.ProjectDoesNotExist();         // Ensure project exists
+        if (msg.sender != project.client) revert EscrowErrors.NotProjectClient();     // Ensure only the client can approve work
+        if (project.status != ProjectTypes.ProjectStatus.Submitted) revert EscrowErrors.ProjectNotSubmitted();   // Ensure work has been submitted
+
+        project.status = ProjectTypes.ProjectStatus.Completed;   // Move project into completed state
+
+        emit WorkApproved(_projectId, msg.sender);   // record approval on-chain
+    }
+
+    // Releases escrow funds to the freelancer
+    function releasePayment(uint256 _projectId) public override nonReentrant {
+        ProjectTypes.Project storage project = s_projects[_projectId];
+
+        if (project.id == 0) revert EscrowErrors.ProjectDoesNotExist();
+        if (msg.sender != project.client) revert EscrowErrors.NotProjectClient();   // Ensure only the client can release payment
+        if (project.status != ProjectTypes.ProjectStatus.Completed) revert EscrowErrors.ProjectNotCompleted();  // Ensure project has been approved
+        if (project.freelancer == address(0)) revert EscrowErrors.NotProjectFreelancer();
+
+        uint256 paymentAmount = s_projectFunds[_projectId];  // Get escrow amount
+        if (paymentAmount == 0) revert EscrowErrors.NoFundsAvailable();  // if amount == 0, error
+
+        s_projectFunds[_projectId] = 0; // clear escrow balance before sending ETH
+
+        (bool success, ) = payable(project.freelancer).call{value: paymentAmount}("");  // Send ETH to freelancer
+        if (!success) revert EscrowErrors.TransferFailed();  // If transfer failed
+
+        emit PaymentReleased(_projectId, project.freelancer, paymentAmount);
+    }
+
+
+    // Allows the client to reclaim escrow funds if work has not been submitted yet
+    function refundClient(uint256 _projectId) public override nonReentrant {
+        ProjectTypes.Project storage project = s_projects[_projectId];
+
+        if (project.id == 0) revert EscrowErrors.ProjectDoesNotExist();
+        if (msg.sender != project.client) revert EscrowErrors.NotProjectClient(); //  only the client can request a refund
+        if (project.status != ProjectTypes.ProjectStatus.Funded) revert EscrowErrors.InvalidStatus();  // refund only allowed while project is funded
+
+        uint256 refundAmount = s_projectFunds[_projectId];
+        if (refundAmount == 0) revert EscrowErrors.NoFundsAvailable();
+
+        s_projectFunds[_projectId] = 0;  // clear escrow balance first
+        project.status = ProjectTypes.ProjectStatus.Cancelled;  // mark project as cancelled
+
+        (bool success, ) = payable(project.client).call{value: refundAmount}(""); // Return ETH to client
+        if (!success) revert EscrowErrors.TransferFailed();
+
+        emit RefundIssued(_projectId, project.client, refundAmount);
+    }
+
+
+        // ============================================
+        // MILESTONE FUNCTIONS
+        // =========================
 
     // Allows the project client to create milestones
-function createMilestone(
-    uint256 _projectId,
-    string memory _title,
-    uint256 _amount
-) public {
+    function createMilestone(uint256 _projectId, string memory _title, uint256 _amount) public override {
+        ProjectTypes.Project storage project = s_projects[_projectId];   
 
-    ProjectTypes.Project storage project =
-        s_projects[_projectId];
+        if (project.id == 0) revert EscrowErrors.ProjectDoesNotExist(); // Ensure project exists
+        if (msg.sender != project.client) revert EscrowErrors.NotProjectClient();  // Ensure only project creator can add milestones
 
-    // Ensure project exists
-    require(
-        project.id != 0,
-        "Project does not exist"
-    );
+        if (s_totalMilestoneAmount[_projectId] + _amount > project.budget) { // Ensure milestone total does not exceed project budget
+            revert MilestoneErrors.MilestoneBudgetExceeded();
+        }
 
-    // Ensure only project creator can add milestones
-    require(
-        msg.sender == project.client,
-        "Only project client can create milestones"
-    );
+        s_milestoneCounter[_projectId]++;  // Increment milestone counter for this project
+        uint256 milestoneId = s_milestoneCounter[_projectId];
 
-    // Ensure milestone total does not exceed project budget
-    if (
-        s_totalMilestoneAmount[_projectId] +
-        _amount >
-        project.budget
-    ) {
-        revert MilestoneErrors.MilestoneBudgetExceeded();
-    }
-    // Increment milestone counter for this project
-    s_milestoneCounter[_projectId]++;
-
-    uint256 milestoneId =
-        s_milestoneCounter[_projectId];
-
-    // Store milestone
-    s_milestones[_projectId][milestoneId] =
-        MilestoneTypes.Milestone({
+        // Store milestone
+        s_milestones[_projectId][milestoneId] = MilestoneTypes.Milestone({
             id: milestoneId,
             title: _title,
             amount: _amount,
-            status:
-                MilestoneTypes.MilestoneStatus.Pending
+            status: MilestoneTypes.MilestoneStatus.Pending
         });
 
-    // Update total milestone allocation
-s_totalMilestoneAmount[_projectId] +=
-    _amount;
+        s_totalMilestoneAmount[_projectId] += _amount;  // Update total milestone allocation
 
-    emit MilestoneCreated(
-        _projectId,
-        milestoneId,
-        _amount
-    );
-}
-
-// Allows the assigned freelancer to submit a milestone
-function submitMilestone(
-    uint256 _projectId,
-    uint256 _milestoneId
-) public {
-
-    ProjectTypes.Project storage project =
-        s_projects[_projectId];
-
-    MilestoneTypes.Milestone storage milestone =
-        s_milestones[_projectId][_milestoneId];
-
-    // Ensure milestone exists
-    if (milestone.id == 0) {
-        revert MilestoneErrors.MilestoneDoesNotExist();
+        emit MilestoneCreated(_projectId, milestoneId, _amount);
     }
 
-    // Ensure only assigned freelancer can submit
-    if (msg.sender != project.freelancer) {
-        revert MilestoneErrors.NotAssignedFreelancer();
+    // Allows the assigned freelancer to submit a milestone
+    function submitMilestone(uint256 _projectId, uint256 _milestoneId) public override {
+        ProjectTypes.Project storage project = s_projects[_projectId];
+        MilestoneTypes.Milestone storage milestone = s_milestones[_projectId][_milestoneId];
+
+        if (milestone.id == 0) revert MilestoneErrors.MilestoneDoesNotExist();   // Ensure milestone exists
+        if (msg.sender != project.freelancer) revert MilestoneErrors.NotAssignedFreelancer();  // ensure only assigned freelancer can submit
+
+        // Milestone must still be pending
+        if (milestone.status != MilestoneTypes.MilestoneStatus.Pending) {
+            revert MilestoneErrors.MilestoneNotPending();
+        }
+
+        milestone.status = MilestoneTypes.MilestoneStatus.Submitted;  // Update milestone status
+        emit MilestoneSubmitted(_projectId, _milestoneId);
     }
 
-    // Milestone must still be pending
-    if (
-        milestone.status !=
-        MilestoneTypes.MilestoneStatus.Pending
-    ) {
-        revert MilestoneErrors.MilestoneNotPending();
+
+    // Allows the client to approve a submitted milestone
+    function approveMilestone(uint256 _projectId, uint256 _milestoneId) public override {
+        ProjectTypes.Project storage project = s_projects[_projectId];
+        MilestoneTypes.Milestone storage milestone = s_milestones[_projectId][_milestoneId];
+
+        if (milestone.id == 0) revert MilestoneErrors.MilestoneDoesNotExist(); // ensure milestone exists
+
+        if (msg.sender != project.client) revert MilestoneErrors.NotProjectClient();  // ensure only project client can approve
+
+        if (milestone.status != MilestoneTypes.MilestoneStatus.Submitted) {           // milestone must be submitted first
+            revert MilestoneErrors.MilestoneNotSubmitted();
+        }
+
+        milestone.status = MilestoneTypes.MilestoneStatus.Approved;   // update status
+        emit MilestoneApproved(_projectId, _milestoneId);
     }
 
-    // Update milestone status
-    milestone.status =
-        MilestoneTypes.MilestoneStatus.Submitted;
 
-    emit MilestoneSubmitted(
-        _projectId,
-        _milestoneId
-    );
-}
+    // ===== Releases payment for an approved milestone
+    function payMilestone(uint256 _projectId, uint256 _milestoneId) public override nonReentrant {
+        ProjectTypes.Project storage project = s_projects[_projectId];
+        MilestoneTypes.Milestone storage milestone = s_milestones[_projectId][_milestoneId];
 
-// Allows the client to approve a submitted milestone
-function approveMilestone(
-    uint256 _projectId,
-    uint256 _milestoneId
-) public {
+        if (milestone.id == 0) revert MilestoneErrors.MilestoneDoesNotExist();
+        if (msg.sender != project.client) revert MilestoneErrors.NotProjectClient();  // only the client can authorize payment
 
-    ProjectTypes.Project storage project =
-        s_projects[_projectId];
+        if (milestone.status != MilestoneTypes.MilestoneStatus.Approved) {  // milestone must be approved
+            revert MilestoneErrors.MilestoneNotSubmitted();
+        }
 
-    MilestoneTypes.Milestone storage milestone =
-        s_milestones[_projectId][_milestoneId];
+        if (s_projectFunds[_projectId] < milestone.amount) revert EscrowErrors.NoFundsAvailable();   // ensure that project has enough escrowed funds
+        if (project.freelancer == address(0)) revert EscrowErrors.NotProjectFreelancer();
 
-    // Ensure milestone exists
-    if (milestone.id == 0) {
-        revert MilestoneErrors.MilestoneDoesNotExist();
+        uint256 platformFee = (milestone.amount * EscrowConstants.PLATFORM_FEE) / 100;   // calculate platform fee
+
+        uint256 freelancerPayment = milestone.amount - platformFee;  // calculate freelancer payout
+
+        s_projectFunds[_projectId] -= milestone.amount;      // deduct milestone amount from escrow
+        s_platformBalance += platformFee;          // Store platform fee
+
+        milestone.status = MilestoneTypes.MilestoneStatus.Paid;   // mark milestone as paid
+        s_paidMilestoneCount[_projectId]++;
+
+        (bool success, ) = payable(project.freelancer).call{value: freelancerPayment}("");  // send freelancer's share
+        if (!success) revert EscrowErrors.TransferFailed();
+
+        // the project needs to auto complete when all milestones has been paid
+        if (s_paidMilestoneCount[_projectId] == s_milestoneCounter[_projectId]) {
+            project.status = ProjectTypes.ProjectStatus.Completed;
+        }
+
+        emit MilestonePaid(_projectId, _milestoneId, milestone.amount);
     }
 
-    // Ensure only project client can approve
-    if (msg.sender != project.client) {
-        revert MilestoneErrors.NotProjectClient();
+
+
+    // ===================================
+    // PLATFORM
+    // =========================
+
+    function withdrawPlatformFees() public override nonReentrant {
+        if (msg.sender != s_owner) revert EscrowErrors.OnlyOwner();
+
+        uint256 amount = s_platformBalance;
+        if (amount == 0) revert EscrowErrors.NoFeesAvailable();
+
+        s_platformBalance = 0;
+
+        (bool success, ) = payable(s_owner).call{value: amount}("");
+        if (!success) revert EscrowErrors.TransferFailed();
+
+        emit PlatformFeesWithdrawn(s_owner, amount);
     }
 
-    // Milestone must be submitted first
-    if (
-        milestone.status !=
-        MilestoneTypes.MilestoneStatus.Submitted
-    ) {
-        revert MilestoneErrors.MilestoneNotSubmitted();
-    }
 
-    // Update status
-    milestone.status =
-        MilestoneTypes.MilestoneStatus.Approved;
-
-    emit MilestoneApproved(
-        _projectId,
-        _milestoneId
-    );
-}
-
-// Releases payment for an approved milestone
-function payMilestone(
-    uint256 _projectId,
-    uint256 _milestoneId
-) public nonReentrant {
-
-    ProjectTypes.Project storage project =
-        s_projects[_projectId];
-
-    MilestoneTypes.Milestone storage milestone =
-        s_milestones[_projectId][_milestoneId];
-
-    // Ensure milestone exists
-    if (milestone.id == 0) {
-        revert MilestoneErrors.MilestoneDoesNotExist();
-    }
-
-    // Only the client can authorize payment
-    if (msg.sender != project.client) {
-        revert MilestoneErrors.NotProjectClient();
-    }
-
-    // Milestone must be approved
-    if (
-        milestone.status !=
-        MilestoneTypes.MilestoneStatus.Approved
-    ) {
-        revert MilestoneErrors.MilestoneNotSubmitted();
-    }
-
-    // Ensure project has enough escrowed funds
-    require(
-        s_projectFunds[_projectId] >= milestone.amount,
-        "Insufficient escrow balance"
-    );
-
-    // Calculate platform fee
-uint256 platformFee =
-    (milestone.amount *
-        EscrowConstants.PLATFORM_FEE) / 100;
-
-// Calculate freelancer payout
-uint256 freelancerPayment =
-    milestone.amount - platformFee;
-
-// Deduct milestone amount from escrow
-s_projectFunds[_projectId] -=
-    milestone.amount;
-
-// Store platform fee
-s_platformBalance += platformFee;
-
-// Mark milestone as paid
-milestone.status =
-    MilestoneTypes.MilestoneStatus.Paid;
-
-// Send freelancer's share
-(bool success, ) =
-    payable(project.freelancer).call{
-        value: freelancerPayment
-    }("");
-
-require(
-    success,
-    "Milestone payment failed"
-);
-
-    emit MilestonePaid(
-        _projectId,
-        _milestoneId,
-        milestone.amount
-    );
-}
+    // ===================================
+    // VIEWS
+    // =========================
 
     // Returns details of a specific project
-    function getProject(
-        uint256 _projectId
-    )
-        public
-        view
-        returns (ProjectTypes.Project memory)
-    {
+    function getProject(uint256 _projectId) public view override returns (ProjectTypes.Project memory){
         return s_projects[_projectId];
     }
 
-// Returns the amount of escrowed funds for a project
-function getProjectFunds(
-    uint256 _projectId
-)
-    public
-    view
-    returns (uint256)
-{
-    return s_projectFunds[_projectId];
-}
-
-    // Allows a freelancer to accept an available project
-    function acceptProject(
-        uint256 _projectId
-    ) public {
-
-        ProjectTypes.Project storage project =
-            s_projects[_projectId];
-
-        // Ensure project exists
-        require(
-            project.id != 0,
-            "Project does not exist"
-        );
-
-        // Ensure project is still open
-        require(
-            project.status ==
-                ProjectTypes.ProjectStatus.Open,
-            "Project is not open"
-        );
-
-        // Assign freelancer to project
-        project.freelancer = msg.sender;
-
-        // Move project into Accepted state
-        project.status =
-            ProjectTypes.ProjectStatus.Accepted;
-
-        // Record acceptance on-chain
-        emit ProjectAccepted(
-            _projectId,
-            msg.sender
-        );
+    // Returns the amount of escrowed funds for a project
+    function getProjectFunds(uint256 _projectId) public view override returns (uint256){
+        return s_projectFunds[_projectId];
     }
 
-    // Allows the client to deposit funds into escrow
-function fundProject(
-    uint256 _projectId
-) public payable {
-
-    ProjectTypes.Project storage project =
-        s_projects[_projectId];
-
-    // Ensure project exists
-    require(
-        project.id != 0,
-        "Project does not exist"
-    );
-
-    // Ensure only the client can fund the project
-    require(
-        msg.sender == project.client,
-        "Only client can fund project"
-    );
-
-    // Ensure freelancer has already accepted
-    require(
-        project.status ==
-            ProjectTypes.ProjectStatus.Accepted,
-        "Project must be accepted first"
-    );
-
-    // Ensure correct amount of ETH is sent
-    require(
-        msg.value == project.budget,
-        "Incorrect funding amount"
-    );
-
-    // Store escrow balance
-    s_projectFunds[_projectId] = msg.value;
-
-    // Update project status
-    project.status =
-        ProjectTypes.ProjectStatus.Funded;
-
-    // Notify blockchain that funds were deposited
-    emit ProjectFunded(
-        _projectId,
-        msg.value
-    );
-}
-
-// Returns the total fees collected by the platform
-function getPlatformBalance()
-    public
-    view
-    returns (uint256)
-{
-    return s_platformBalance;
-}
-
-    // Allows the assigned freelancer to submit completed work
-function submitWork(
-    uint256 _projectId
-) public {
-
-    ProjectTypes.Project storage project =
-        s_projects[_projectId];
-
-    // Ensure project exists
-    require(
-        project.id != 0,
-        "Project does not exist"
-    );
-
-    // Ensure only assigned freelancer can submit work
-    require(
-        msg.sender == project.freelancer,
-        "Only assigned freelancer can submit work"
-    );
-
-    // Ensure project has been funded
-    require(
-        project.status ==
-            ProjectTypes.ProjectStatus.Funded,
-        "Project must be funded first"
-    );
-
-    // Move project to submitted state
-    project.status =
-        ProjectTypes.ProjectStatus.Submitted;
-
-    // Record submission on-chain
-    emit WorkSubmitted(
-        _projectId,
-        msg.sender
-    );
-}
-
-// Allows the client to approve submitted work
-function approveWork(
-    uint256 _projectId
-) public {
-
-    ProjectTypes.Project storage project =
-        s_projects[_projectId];
-
-    // Ensure project exists
-    require(
-        project.id != 0,
-        "Project does not exist"
-    );
-
-    // Ensure only the client can approve work
-    require(
-        msg.sender == project.client,
-        "Only client can approve work"
-    );
-
-    // Ensure work has been submitted
-    require(
-        project.status ==
-            ProjectTypes.ProjectStatus.Submitted,
-        "Work has not been submitted"
-    );
-
-    // Move project into completed state
-    project.status =
-        ProjectTypes.ProjectStatus.Completed;
-
-    // Record approval on-chain
-    emit WorkApproved(
-        _projectId,
-        msg.sender
-    );
-}
-
-//Getter Functions
-// Returns the current project counter
-function getProjectCount()
-    public
-    view
-    returns (uint256)
-{
-    return s_projectCounter;
-}
-
-// Returns the ETH currently held in escrow for a project
-function getEscrowBalance(
-    uint256 _projectId
-)
-    public
-    view
-    returns (uint256)
-{
+    // returns the ETH currently held in escrow for a project
+    function getEscrowBalance(uint256 _projectId) public view override returns (uint256) {
     return s_projectFunds[_projectId];
-}
+    }
 
-// Returns details of a milestone
-// Each project can contain multiple milestones.
-// The first key is the project ID.
-// The second key is the milestone ID.
-function getMilestone(
-    uint256 _projectId,
-    uint256 _milestoneId
-)
-    public
-    view
-    returns (MilestoneTypes.Milestone memory)
-{
-    return
-        s_milestones[
-            _projectId
-        ][
-            _milestoneId
-        ];
-}
+    // returns the current project counter
+    function getProjectCount() public view override returns (uint256) {
+        return s_projectCounter;
+    }
 
-// Returns the number of milestones in a project
-function getMilestoneCount(
-    uint256 _projectId
-)
-    public
-    view
-    returns (uint256)
-{
-    return s_milestoneCounter[_projectId];
-}
+    // Returns details of a milestone
+    // Each project can contain multiple milestones
+    // The first key is the project ID
+    // The second key is the milestone ID
+    function getMilestone(uint256 _projectId, uint256 _milestoneId)
+        public view override returns (MilestoneTypes.Milestone memory)
+    {
+        return s_milestones[_projectId][_milestoneId];
+    }
 
-function getOwner()
-    public
-    view
-    returns (address)
-{
-    return s_owner;
-}
+    // returns the number of milestones in a project
+    function getMilestoneCount(uint256 _projectId) public view override returns (uint256) {
+        return s_milestoneCounter[_projectId];
+    }
 
-function withdrawPlatformFees()
-    public
-    nonReentrant
-{
-    require(
-        msg.sender == s_owner,
-        "Only owner can withdraw"
-    );
 
-    uint256 amount =
-        s_platformBalance;
+    // Returns the total fees collected by the platform
+    function getPlatformBalance() public view override returns (uint256) {
+        return s_platformBalance;
+    }
 
-    require(
-        amount > 0,
-        "No fees available"
-    );
+    // returns owner of the project
+    function getOwner() public view override returns (address) {
+        return s_owner;
+    }
 
-    s_platformBalance = 0;
-
-    (bool success, ) =
-        payable(s_owner).call{
-            value: amount
-        }("");
-
-    require(
-        success,
-        "Withdrawal failed"
-    );
-
-    emit PlatformFeesWithdrawn(
-        s_owner,
-        amount
-    );
-}
-
-// Releases escrow funds to the freelancer
-function releasePayment(
-    uint256 _projectId
-) public nonReentrant {
-
-    ProjectTypes.Project storage project =
-        s_projects[_projectId];
-
-    // Ensure project exists
-    require(
-        project.id != 0,
-        "Project does not exist"
-    );
-
-    // Ensure only the client can release payment
-    require(
-        msg.sender == project.client,
-        "Only client can release payment"
-    );
-
-    // Ensure project has been approved
-    require(
-        project.status ==
-            ProjectTypes.ProjectStatus.Completed,
-        "Project not approved"
-    );
-
-    // Get escrow amount
-    uint256 paymentAmount =
-        s_projectFunds[_projectId];
-
-    // Prevent double payment
-    require(
-        paymentAmount > 0,
-        "No funds available"
-    );
-
-    // Clear escrow balance before sending ETH
-    s_projectFunds[_projectId] = 0;
-
-    // Send ETH to freelancer
-    (bool success, ) =
-        payable(project.freelancer).call{
-            value: paymentAmount
-        }("");
-
-    require(
-        success,
-        "Payment transfer failed"
-    );
-
-    emit PaymentReleased(
-        _projectId,
-        project.freelancer,
-        paymentAmount
-    );
-}
-
-// Allows the client to reclaim escrow funds
-// if work has not been submitted yet
-function refundClient(
-    uint256 _projectId
-) public nonReentrant {
-
-    ProjectTypes.Project storage project =
-        s_projects[_projectId];
-
-    // Ensure project exists
-    require(
-        project.id != 0,
-        "Project does not exist"
-    );
-
-    // Only the client can request a refund
-    require(
-        msg.sender == project.client,
-        "Only client can request refund"
-    );
-
-    // Refund only allowed while project is funded
-    require(
-        project.status ==
-            ProjectTypes.ProjectStatus.Funded,
-        "Refund not available"
-    );
-
-    uint256 refundAmount =
-        s_projectFunds[_projectId];
-
-    require(
-        refundAmount > 0,
-        "No funds available"
-    );
-
-    // Clear escrow balance first
-    s_projectFunds[_projectId] = 0;
-
-    // Mark project as cancelled
-    project.status =
-        ProjectTypes.ProjectStatus.Cancelled;
-
-    // Return ETH to client
-    (bool success, ) =
-        payable(project.client).call{
-            value: refundAmount
-        }("");
-
-    require(
-        success,
-        "Refund transfer failed"
-    );
-
-    emit RefundIssued(
-        _projectId,
-        project.client,
-        refundAmount
-    );
-}
 }
