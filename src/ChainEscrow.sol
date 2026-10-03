@@ -157,7 +157,21 @@ contract ChainEscrow is IChainEscrow, ReentrancyGuard {
 
         if (project.id == 0) revert EscrowErrors.ProjectDoesNotExist();
         if (msg.sender != project.client) revert EscrowErrors.NotProjectClient(); //  only the client can request a refund
-        if (project.status != ProjectTypes.ProjectStatus.Funded) revert EscrowErrors.InvalidStatus();  // refund only allowed while project is funded
+
+        // if (project.status != ProjectTypes.ProjectStatus.Funded) revert EscrowErrors.InvalidStatus();  // refund only allowed while project is funded e.i refunds only work before the freelancer accepts. But what if the freelancer accepted, then disappeared?. So i think we should ad a deadline based refund path
+
+        // refund allowed if:
+        //   - project is Funded (freelancer never accepted), OR
+        //   - project is Accepted but deadline has passed
+        bool canRefundImmediately = project.status == ProjectTypes.ProjectStatus.Funded;
+        bool canRefundAfterDeadline = 
+            project.status == ProjectTypes.ProjectStatus.Accepted && 
+            block.timestamp > project.deadline;
+
+        if (!canRefundImmediately && !canRefundAfterDeadline) {
+            revert EscrowErrors.InvalidStatus();
+        }
+
 
         uint256 refundAmount = s_projectFunds[_projectId];
         if (refundAmount == 0) revert EscrowErrors.NoFundsAvailable();
