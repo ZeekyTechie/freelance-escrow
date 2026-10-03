@@ -4,6 +4,7 @@ pragma solidity ^0.8.24;
 import "forge-std/Test.sol";
 import "../src/ChainEscrow.sol";
 import "../src/types/MilestoneTypes.sol";
+import "../src/types/ProjectTypes.sol";
 
 contract ChainEscrowTest is Test {
 
@@ -22,6 +23,27 @@ contract ChainEscrowTest is Test {
         vm.deal(freelancer, 10 ether);
     }
 
+
+    // ============================================
+    // HELPER FUNCTION: create + fund (which is used everywhere)
+    // ===========================
+    function _createAndFund() internal {
+        vm.prank(client);
+        escrow.createProject(
+            "Build Website",
+            "Create an ecommerce website",
+            1 ether,
+            block.timestamp + 30 days
+        );
+
+        vm.prank(client);
+        escrow.fundProject{value: 1 ether}(1);
+    }
+
+    // ============================================
+    // PROJECT LIFECYCLE TESTINGS
+    // =============================
+
     function testCreateProject() public {
 
         vm.prank(client);
@@ -39,853 +61,716 @@ contract ChainEscrowTest is Test {
         );
     }
 
+    function testFundProject() public {
+        vm.prank(client);
+        escrow.createProject(
+            "Build Website",
+            "Create an ecommerce website",
+            1 ether,
+            block.timestamp + 30 days
+        );
+
+        vm.prank(client);
+        escrow.fundProject{value: 1 ether}(1);
+
+        assertEq(escrow.getEscrowBalance(1), 1 ether);
+
+        ProjectTypes.Project memory project = escrow.getProject(1);
+        assertEq(uint256(project.status), uint256(ProjectTypes.ProjectStatus.Funded));
+    }
+
+
     function testAcceptProject() public {
 
-    vm.prank(client);
+        _createAndFund();
 
-    escrow.createProject(
-        "Build Website",
-        "Create an ecommerce website",
-        1 ether,
-        block.timestamp + 30 days
-    );
+        vm.prank(freelancer);
 
-    vm.prank(freelancer);
+        escrow.acceptProject(1);
 
-    escrow.acceptProject(1);
+        ProjectTypes.Project memory project = escrow.getProject(1);
 
-    ProjectTypes.Project memory project =
-        escrow.getProject(1);
+        assertEq(project.freelancer, freelancer);
+        assertEq(uint256(project.status), uint256(ProjectTypes.ProjectStatus.Accepted));
+    }
 
-    assertEq(
-        project.freelancer,
-        freelancer
-    );
-}
 
-function testFundProject() public {
+    function testSubmitWork() public {
 
-    vm.prank(client);
+        _createAndFund();
 
-    escrow.createProject(
-        "Build Website",
-        "Create an ecommerce website",
-        1 ether,
-        block.timestamp + 30 days
-    );
+        vm.prank(freelancer);
+        escrow.acceptProject(1);
 
-    vm.prank(freelancer);
+        vm.prank(freelancer);
+        escrow.submitWork(1);
 
-    escrow.acceptProject(1);
+        ProjectTypes.Project memory project = escrow.getProject(1);
 
-    vm.prank(client);
+        assertEq(
+            uint256(project.status),
+            uint256(ProjectTypes.ProjectStatus.Submitted)
+        );
+    }
 
-    escrow.fundProject{value: 1 ether}(1);
 
-    assertEq(
-        escrow.getEscrowBalance(1),
-        1 ether
-    );
-}
+    function testApproveWork() public {
 
-function testSubmitWork() public {
+        _createAndFund();
 
-    vm.prank(client);
+        vm.prank(freelancer);
+        escrow.acceptProject(1);
 
-    escrow.createProject(
-        "Build Website",
-        "Create an ecommerce website",
-        1 ether,
-        block.timestamp + 30 days
-    );
+        vm.prank(freelancer);
+        escrow.submitWork(1);
 
-    vm.prank(freelancer);
-    escrow.acceptProject(1);
+        vm.prank(client);
+        escrow.approveWork(1);
 
-    vm.prank(client);
-    escrow.fundProject{value: 1 ether}(1);
+        ProjectTypes.Project memory project =
+            escrow.getProject(1);
 
-    vm.prank(freelancer);
-    escrow.submitWork(1);
+        assertEq(
+            uint256(project.status),
+            uint256(ProjectTypes.ProjectStatus.Completed)
+        );
+    }
 
-    ProjectTypes.Project memory project =
-        escrow.getProject(1);
+    function testReleasePayment() public {
 
-    assertEq(
-        uint256(project.status),
-        uint256(ProjectTypes.ProjectStatus.Submitted)
-    );
-}
+        _createAndFund();
 
-function testApproveWork() public {
+        vm.prank(freelancer);
+        escrow.acceptProject(1);
 
-    vm.prank(client);
-    escrow.createProject(
-        "Build Website",
-        "Create an ecommerce website",
-        1 ether,
-        block.timestamp + 30 days
-    );
+        vm.prank(freelancer);
+        escrow.submitWork(1);
 
-    vm.prank(freelancer);
-    escrow.acceptProject(1);
+        vm.prank(client);
+        escrow.approveWork(1);
 
-    vm.prank(client);
-    escrow.fundProject{value: 1 ether}(1);
+        uint256 balanceBefore = freelancer.balance;
 
-    vm.prank(freelancer);
-    escrow.submitWork(1);
+        vm.prank(client);
+        escrow.releasePayment(1);
 
-    vm.prank(client);
-    escrow.approveWork(1);
+        uint256 balanceAfter =
+            freelancer.balance;
 
-    ProjectTypes.Project memory project =
-        escrow.getProject(1);
+        assertEq(
+            balanceAfter,
+            balanceBefore + 1 ether
+        );
+    }
 
-    assertEq(
-        uint256(project.status),
-        uint256(ProjectTypes.ProjectStatus.Completed)
-    );
-}
+    function testRefundClient() public {
 
-function testReleasePayment() public {
+        _createAndFund();
 
-    vm.prank(client);
-    escrow.createProject(
-        "Build Website",
-        "Create an ecommerce website",
-        1 ether,
-        block.timestamp + 30 days
-    );
+        uint256 balanceBefore = client.balance;
 
-    vm.prank(freelancer);
-    escrow.acceptProject(1);
+        vm.prank(client);
+        escrow.refundClient(1);
 
-    vm.prank(client);
-    escrow.fundProject{value: 1 ether}(1);
+        assertEq(client.balance, balanceBefore + 1 ether);
 
-    vm.prank(freelancer);
-    escrow.submitWork(1);
+        ProjectTypes.Project memory project = escrow.getProject(1);
+        assertEq(uint256(project.status), uint256(ProjectTypes.ProjectStatus.Cancelled));
+    }
 
-    vm.prank(client);
-    escrow.approveWork(1);
+        // ============================================
+        // ACCESS CONTROL or REVERT TESTS
+        // =================================
 
-    uint256 balanceBefore =
-        freelancer.balance;
+    function testOnlyFreelancerCanSubmitWork() public {
 
-    vm.prank(client);
-    escrow.releasePayment(1);
+        _createAndFund();
 
-    uint256 balanceAfter =
-        freelancer.balance;
+        vm.prank(freelancer);
+        escrow.acceptProject(1);
 
-    assertEq(
-        balanceAfter,
-        balanceBefore + 1 ether
-    );
-}
+        vm.expectRevert();
 
-function testRefundClient() public {
+        vm.prank(client);
+        escrow.submitWork(1);
+    }
 
-    vm.prank(client);
-    escrow.createProject(
-        "Build Website",
-        "Create an ecommerce website",
-        1 ether,
-        block.timestamp + 30 days
-    );
 
-    vm.prank(freelancer);
-    escrow.acceptProject(1);
+    function testOnlyClientCanApproveWork() public {
 
-    vm.prank(client);
-    escrow.fundProject{value: 1 ether}(1);
+        _createAndFund();
 
-    uint256 balanceBefore =
-        client.balance;
+        vm.prank(freelancer);
+        escrow.acceptProject(1);
 
-    vm.prank(client);
-    escrow.refundClient(1);
+        // vm.prank(client);
+        // escrow.fundProject{value: 1 ether}(1);
 
-    uint256 balanceAfter =
-        client.balance;
+        vm.prank(freelancer);
+        escrow.submitWork(1);
 
-    assertEq(
-        balanceAfter,
-        balanceBefore + 1 ether
-    );
-}
+        vm.expectRevert();
 
-function testOnlyFreelancerCanSubmitWork() public {
+        vm.prank(freelancer);
+        escrow.approveWork(1);
+    }
 
-    vm.prank(client);
-    escrow.createProject(
-        "Build Website",
-        "Create an ecommerce website",
-        1 ether,
-        block.timestamp + 30 days
-    );
+    function testCannotApproveBeforeSubmission() public {
 
-    vm.prank(freelancer);
-    escrow.acceptProject(1);
+        _createAndFund();
 
-    vm.prank(client);
-    escrow.fundProject{value: 1 ether}(1);
+        vm.prank(freelancer);
+        escrow.acceptProject(1);
 
-    vm.expectRevert();
+        // vm.prank(client);
+        // escrow.fundProject{value: 1 ether}(1);
 
-    vm.prank(client);
-    escrow.submitWork(1);
-}
+        vm.expectRevert();
+        vm.prank(client);
+        escrow.approveWork(1);
+    }
 
-function testCannotFundWithWrongAmount() public {
 
-    vm.prank(client);
-    escrow.createProject(
-        "Build Website",
-        "Create an ecommerce website",
-        1 ether,
-        block.timestamp + 30 days
-    );
+    function testCannotReleasePaymentTwice() public {
 
-    vm.prank(freelancer);
-    escrow.acceptProject(1);
+        _createAndFund();
 
-    vm.expectRevert();
+        vm.prank(freelancer);
+        escrow.acceptProject(1);
 
-    vm.prank(client);
-    escrow.fundProject{value: 0.5 ether}(1);
-}
+        // vm.prank(client);
+        // escrow.fundProject{value: 1 ether}(1);
 
-function testOnlyClientCanApproveWork() public {
+        vm.prank(freelancer);
+        escrow.submitWork(1);
 
-    vm.prank(client);
-    escrow.createProject(
-        "Build Website",
-        "Create an ecommerce website",
-        1 ether,
-        block.timestamp + 30 days
-    );
+        vm.prank(client);
+        escrow.approveWork(1);
 
-    vm.prank(freelancer);
-    escrow.acceptProject(1);
+        vm.prank(client);
+        escrow.releasePayment(1);
 
-    vm.prank(client);
-    escrow.fundProject{value: 1 ether}(1);
+        vm.expectRevert();
+        vm.prank(client);
+        escrow.releasePayment(1);
+    }
 
-    vm.prank(freelancer);
-    escrow.submitWork(1);
+    function testCannotRefundAfterSubmission() public {
 
-    vm.expectRevert();
+        _createAndFund();
+        // vm.prank(client);
+        // escrow.createProject(
+        //     "Build Website",
+        //     "Create an ecommerce website",
+        //     1 ether,
+        //     block.timestamp + 30 days
+        // );
 
-    vm.prank(freelancer);
-    escrow.approveWork(1);
-}
+        vm.prank(freelancer);
+        escrow.acceptProject(1);
 
-function testCannotApproveBeforeSubmission() public {
+        // vm.prank(client);
+        // escrow.fundProject{value: 1 ether}(1);
 
-    vm.prank(client);
-    escrow.createProject(
-        "Build Website",
-        "Create an ecommerce website",
-        1 ether,
-        block.timestamp + 30 days
-    );
+        // the project is Submitted, not funded and not past deadline ==> refund must fail
 
-    vm.prank(freelancer);
-    escrow.acceptProject(1);
+        vm.prank(freelancer);
+        escrow.submitWork(1);
 
-    vm.prank(client);
-    escrow.fundProject{value: 1 ether}(1);
+        vm.expectRevert();
+        vm.prank(client);
+        escrow.refundClient(1);
+    }
 
-    vm.expectRevert();
+    function testCannotAcceptProjectTwice() public {
 
-    vm.prank(client);
-    escrow.approveWork(1);
-}
+        _createAndFund();
 
-function testCannotReleasePaymentTwice() public {
+        vm.prank(freelancer);
+        escrow.acceptProject(1);
 
-    vm.prank(client);
-    escrow.createProject(
-        "Build Website",
-        "Create an ecommerce website",
-        1 ether,
-        block.timestamp + 30 days
-    );
+        vm.expectRevert();
 
-    vm.prank(freelancer);
-    escrow.acceptProject(1);
+        vm.prank(address(3));
+        escrow.acceptProject(1);
+    }
 
-    vm.prank(client);
-    escrow.fundProject{value: 1 ether}(1);
+    function testCannotFundWithWrongAmount() public {
 
-    vm.prank(freelancer);
-    escrow.submitWork(1);
+        vm.prank(client);
+        escrow.createProject(
+            "Build Website",
+            "Create an ecommerce website",
+            1 ether,
+            block.timestamp + 30 days
+        );
 
-    vm.prank(client);
-    escrow.approveWork(1);
+        // vm.prank(freelancer);
+        // escrow.acceptProject(1);
 
-    vm.prank(client);
-    escrow.releasePayment(1);
+        vm.expectRevert();
+        vm.prank(client);
+        escrow.fundProject{value: 0.5 ether}(1);
+    }
 
-    vm.expectRevert();
+    function testCannotFundTwice() public {
+        _createAndFund();
 
-    vm.prank(client);
-    escrow.releasePayment(1);
-}
+        vm.expectRevert();
+        vm.prank(client);
+        escrow.fundProject{value: 1 ether}(1);
+    }
 
-function testCannotRefundAfterSubmission() public {
+    function testCannotAcceptNonExistentProject() public {
+        vm.expectRevert();
+        vm.prank(freelancer);
+        escrow.acceptProject(999);
+    }
 
-    vm.prank(client);
-    escrow.createProject(
-        "Build Website",
-        "Create an ecommerce website",
-        1 ether,
-        block.timestamp + 30 days
-    );
 
-    vm.prank(freelancer);
-    escrow.acceptProject(1);
+    function testCannotAcceptUnfundedProject() public {
+        vm.prank(client);
+        escrow.createProject(
+            "Build Website",
+            "Create an ecommerce website",
+            1 ether,
+            block.timestamp + 30 days
+        );
 
-    vm.prank(client);
-    escrow.fundProject{value: 1 ether}(1);
+        // the project is still Open (and not Funded) ==> accept must still fail
+        vm.expectRevert();
+        vm.prank(freelancer);
+        escrow.acceptProject(1);
+    }
 
-    vm.prank(freelancer);
-    escrow.submitWork(1);
+    // function testCannotFundBeforeAcceptance() public {
 
-    vm.expectRevert();
+    //     vm.prank(client);
 
-    vm.prank(client);
-    escrow.refundClient(1);
-}
+    //     escrow.createProject(
+    //         "Build Website",
+    //         "Create an ecommerce website",
+    //         1 ether,
+    //         block.timestamp + 30 days
+    //     );
 
-function testCannotAcceptProjectTwice() public {
+    //     vm.expectRevert();
 
-    vm.prank(client);
-    escrow.createProject(
-        "Build Website",
-        "Create an ecommerce website",
-        1 ether,
-        block.timestamp + 30 days
-    );
+    //     vm.prank(client);
+    //     escrow.fundProject{value: 1 ether}(1);
+    // }
 
-    vm.prank(freelancer);
-    escrow.acceptProject(1);
+    function testCannotFundNonExistentProject() public {
+        vm.expectRevert();
+        vm.prank(client);
+        escrow.fundProject{value: 1 ether}(999);
+    }
 
-    vm.expectRevert();
 
-    vm.prank(address(3));
-    escrow.acceptProject(1);
-}
+        // ============================================
+        // MILESTONE TESTS
+        // =============================
 
-function testCannotFundBeforeAcceptance() public {
+    function testCreateMilestone() public {
 
-    vm.prank(client);
+        vm.prank(client);
 
-    escrow.createProject(
-        "Build Website",
-        "Create an ecommerce website",
-        1 ether,
-        block.timestamp + 30 days
-    );
+        escrow.createProject(
+            "Build Website",
+            "Create ecommerce website",
+            1 ether,
+            block.timestamp + 30 days
+        );
 
-    vm.expectRevert();
+        vm.prank(client);
 
-    vm.prank(client);
-    escrow.fundProject{value: 1 ether}(1);
-}
+        escrow.createMilestone(
+            1,
+            "UI Design",
+            0.3 ether
+        );
 
-function testCannotAcceptNonExistentProject() public {
+        MilestoneTypes.Milestone memory milestone = escrow.getMilestone(1, 1);
 
-    vm.expectRevert();
+        assertEq(
+            milestone.amount,
+            0.3 ether
+        );
+    }
 
-    vm.prank(freelancer);
-    escrow.acceptProject(999);
-}
+    function testOnlyClientCanCreateMilestone() public {
 
-function testCreateMilestone() public {
+        vm.prank(client);
 
-    vm.prank(client);
+        escrow.createProject(
+            "Build Website",
+            "Create ecommerce website",
+            1 ether,
+            block.timestamp + 30 days
+        );
 
-    escrow.createProject(
-        "Build Website",
-        "Create ecommerce website",
-        1 ether,
-        block.timestamp + 30 days
-    );
+        vm.expectRevert();
 
-    vm.prank(client);
+        vm.prank(freelancer);
 
-    escrow.createMilestone(
-        1,
-        "UI Design",
-        0.3 ether
-    );
+        escrow.createMilestone(
+            1,
+            "UI Design",
+            0.3 ether
+        );
+    }
 
-    MilestoneTypes.Milestone memory milestone =
-        escrow.getMilestone(1, 1);
+    function testGetMilestone() public {
 
-    assertEq(
-        milestone.amount,
-        0.3 ether
-    );
-}
+        vm.prank(client);
 
-function testOnlyClientCanCreateMilestone() public {
+        escrow.createProject(
+            "Build Website",
+            "Create ecommerce website",
+            1 ether,
+            block.timestamp + 30 days
+        );
 
-    vm.prank(client);
+        vm.prank(client);
 
-    escrow.createProject(
-        "Build Website",
-        "Create ecommerce website",
-        1 ether,
-        block.timestamp + 30 days
-    );
+        escrow.createMilestone(1, "Frontend Development", 0.4 ether);
 
-    vm.expectRevert();
+        MilestoneTypes.Milestone memory milestone = escrow.getMilestone(1, 1);
 
-    vm.prank(freelancer);
+        assertEq(milestone.id, 1);
+        assertEq(milestone.title, "Frontend Development");
+    }
 
-    escrow.createMilestone(
-        1,
-        "UI Design",
-        0.3 ether
-    );
-}
+    function testSubmitMilestone() public {
 
-function testGetMilestone() public {
+        _createAndFund();
 
-    vm.prank(client);
+        vm.prank(client);
 
-    escrow.createProject(
-        "Build Website",
-        "Create ecommerce website",
-        1 ether,
-        block.timestamp + 30 days
-    );
+        escrow.createMilestone(1, "UI Design", 0.3 ether);
 
-    vm.prank(client);
+        vm.prank(freelancer);
+        escrow.acceptProject(1);
 
-    escrow.createMilestone(
-        1,
-        "Frontend Development",
-        0.4 ether
-    );
+        vm.prank(freelancer);
 
-    MilestoneTypes.Milestone memory milestone =
-        escrow.getMilestone(1, 1);
+        escrow.submitMilestone(1, 1);
 
-    assertEq(
-        milestone.id,
-        1
-    );
+        MilestoneTypes.Milestone memory milestone = escrow.getMilestone(1, 1);
 
-    assertEq(
-        milestone.title,
-        "Frontend Development"
-    );
-}
+        assertEq(
+            uint256(milestone.status),
+            uint256(
+                MilestoneTypes.MilestoneStatus.Submitted
+            )
+        );
+    }
 
-function testSubmitMilestone() public {
+    function testOnlyFreelancerCanSubmitMilestone() public {
+        
+        _createAndFund();
 
-    vm.prank(client);
+        vm.prank(client);
+        escrow.createMilestone(1, "UI Design", 0.3 ether);
 
-    escrow.createProject(
-        "Build Website",
-        "Create ecommerce website",
-        1 ether,
-        block.timestamp + 30 days
-    );
+        vm.prank(freelancer);
+        escrow.acceptProject(1);
 
-    vm.prank(client);
+        vm.expectRevert();
+        vm.prank(client);
 
-    escrow.createMilestone(
-        1,
-        "UI Design",
-        0.3 ether
-    );
+        escrow.submitMilestone(1, 1);
+    }
 
-    vm.prank(freelancer);
+    function testApproveMilestone() public {
 
-    escrow.acceptProject(1);
+        _createAndFund();
 
-    vm.prank(freelancer);
+        vm.prank(client);
+        escrow.createMilestone(1, "UI Design", 0.3 ether);
 
-    escrow.submitMilestone(
-        1,
-        1
-    );
+        vm.prank(freelancer);
+        escrow.acceptProject(1);
 
-    MilestoneTypes.Milestone memory milestone =
-        escrow.getMilestone(1, 1);
+        vm.prank(freelancer);
+        escrow.submitMilestone(1, 1);
 
-    assertEq(
-        uint256(milestone.status),
-        uint256(
-            MilestoneTypes.MilestoneStatus.Submitted
-        )
-    );
-}
+        vm.prank(client);
+        escrow.approveMilestone(1, 1);
 
-function testOnlyFreelancerCanSubmitMilestone()
-    public
-{
-    vm.prank(client);
+        MilestoneTypes.Milestone memory milestone = escrow.getMilestone(1, 1);
 
-    escrow.createProject(
-        "Build Website",
-        "Create ecommerce website",
-        1 ether,
-        block.timestamp + 30 days
-    );
+        assertEq(
+            uint256(milestone.status),
+            uint256(
+                MilestoneTypes.MilestoneStatus.Approved
+            )
+        );
+    }
 
-    vm.prank(client);
+    function testOnlyClientCanApproveMilestone() public {
+        _createAndFund();
 
-    escrow.createMilestone(
-        1,
-        "UI Design",
-        0.3 ether
-    );
+        vm.prank(client);
+        escrow.createMilestone(1, "UI Design", 0.3 ether);
 
-    vm.prank(freelancer);
+        vm.prank(freelancer);
+        escrow.acceptProject(1);
 
-    escrow.acceptProject(1);
+        vm.prank(freelancer);
+        escrow.submitMilestone(1, 1);
 
-    vm.expectRevert();
+        vm.expectRevert();
 
-    vm.prank(client);
+        vm.prank(freelancer);
+        escrow.approveMilestone(1, 1);
+    }
 
-    escrow.submitMilestone(
-        1,
-        1
-    );
-}
+    function testPayMilestone() public {
 
-function testApproveMilestone() public {
+        _createAndFund();
 
-    vm.prank(client);
-    escrow.createProject(
-        "Build Website",
-        "Create ecommerce website",
-        1 ether,
-        block.timestamp + 30 days
-    );
+        vm.prank(client);
+        escrow.createMilestone(1, "UI Design", 0.3 ether);
 
-    vm.prank(client);
-    escrow.createMilestone(
-        1,
-        "UI Design",
-        0.3 ether
-    );
+        vm.prank(freelancer);
+        escrow.acceptProject(1);
 
-    vm.prank(freelancer);
-    escrow.acceptProject(1);
+        // vm.prank(client);
+        // escrow.fundProject{value: 1 ether}(1);
 
-    vm.prank(freelancer);
-    escrow.submitMilestone(1, 1);
+        vm.prank(freelancer);
+        escrow.submitMilestone(1, 1);
 
-    vm.prank(client);
-    escrow.approveMilestone(1, 1);
+        vm.prank(client);
+        escrow.approveMilestone(1, 1);
 
-    MilestoneTypes.Milestone memory milestone =
-        escrow.getMilestone(1, 1);
+        uint256 balanceBefore = freelancer.balance;
 
-    assertEq(
-        uint256(milestone.status),
-        uint256(
-            MilestoneTypes.MilestoneStatus.Approved
-        )
-    );
-}
+        vm.prank(client);
+        escrow.payMilestone(1, 1);
 
-function testOnlyClientCanApproveMilestone()
-    public
-{
-    vm.prank(client);
-    escrow.createProject(
-        "Build Website",
-        "Create ecommerce website",
-        1 ether,
-        block.timestamp + 30 days
-    );
+        uint256 balanceAfter =
+            freelancer.balance;
 
-    vm.prank(client);
-    escrow.createMilestone(
-        1,
-        "UI Design",
-        0.3 ether
-    );
+        // 0.3 - 5% fee = 0.285
+        assertEq( balanceAfter, balanceBefore + 0.285 ether);
 
-    vm.prank(freelancer);
-    escrow.acceptProject(1);
+    }
 
-    vm.prank(freelancer);
-    escrow.submitMilestone(1, 1);
 
-    vm.expectRevert();
+    function testOnlyClientCanPayMilestone() public {
+        _createAndFund();
 
-    vm.prank(freelancer);
-    escrow.approveMilestone(1, 1);
-}
+        vm.prank(client);
+        escrow.createMilestone(1, "UI Design", 0.3 ether);
 
-function testPayMilestone() public {
+        vm.prank(freelancer);
+        escrow.acceptProject(1);
 
-    vm.prank(client);
-    escrow.createProject(
-        "Build Website",
-        "Create ecommerce website",
-        1 ether,
-        block.timestamp + 30 days
-    );
+        // vm.prank(client);
+        // escrow.fundProject{value: 1 ether}(1);
 
-    vm.prank(client);
-    escrow.createMilestone(
-        1,
-        "UI Design",
-        0.3 ether
-    );
+        vm.prank(freelancer);
+        escrow.submitMilestone(1, 1);
 
-    vm.prank(freelancer);
-    escrow.acceptProject(1);
+        vm.prank(client);
+        escrow.approveMilestone(1, 1);
 
-    vm.prank(client);
-    escrow.fundProject{value: 1 ether}(1);
+        vm.expectRevert();
 
-    vm.prank(freelancer);
-    escrow.submitMilestone(1, 1);
+        vm.prank(freelancer);
+        escrow.payMilestone(1, 1);
+    }
 
-    vm.prank(client);
-    escrow.approveMilestone(1, 1);
+    function testPlatformFeeCollected() public {
+        _createAndFund();
 
-    uint256 balanceBefore =
-        freelancer.balance;
+        vm.prank(client);
+        escrow.createMilestone(1, "UI Design", 0.3 ether);
 
-    vm.prank(client);
-    escrow.payMilestone(1, 1);
+        vm.prank(freelancer);
+        escrow.acceptProject(1);
 
-    uint256 balanceAfter =
-        freelancer.balance;
+        // vm.prank(client);
+        // escrow.fundProject{value: 1 ether}(1);
 
-    assertEq(
-    balanceAfter,
-    balanceBefore + 0.285 ether
-);
+        vm.prank(freelancer);
+        escrow.submitMilestone(1, 1);
 
-}
+        vm.prank(client);
+        escrow.approveMilestone(1, 1);
 
-function testOnlyClientCanPayMilestone()
-    public
-{
-    vm.prank(client);
-    escrow.createProject(
-        "Build Website",
-        "Create ecommerce website",
-        1 ether,
-        block.timestamp + 30 days
-    );
+        vm.prank(client);
+        escrow.payMilestone(1, 1);
 
-    vm.prank(client);
-    escrow.createMilestone(
-        1,
-        "UI Design",
-        0.3 ether
-    );
+        assertEq(escrow.getPlatformBalance(), 0.015 ether );
+    }
 
-    vm.prank(freelancer);
-    escrow.acceptProject(1);
-
-    vm.prank(client);
-    escrow.fundProject{value: 1 ether}(1);
+    function testCannotExceedProjectBudgetWithMilestones() public {
+        vm.prank(client);
 
-    vm.prank(freelancer);
-    escrow.submitMilestone(1, 1);
-
-    vm.prank(client);
-    escrow.approveMilestone(1, 1);
-
-    vm.expectRevert();
-
-    vm.prank(freelancer);
-    escrow.payMilestone(1, 1);
-}
-
-function testPlatformFeeCollected()
-    public
-{
-    vm.prank(client);
-
-    escrow.createProject(
-        "Build Website",
-        "Create ecommerce website",
-        1 ether,
-        block.timestamp + 30 days
-    );
-
-    vm.prank(client);
-    escrow.createMilestone(
-        1,
-        "UI Design",
-        0.3 ether
-    );
-
-    vm.prank(freelancer);
-    escrow.acceptProject(1);
-
-    vm.prank(client);
-    escrow.fundProject{value: 1 ether}(1);
-
-    vm.prank(freelancer);
-    escrow.submitMilestone(1, 1);
-
-    vm.prank(client);
-    escrow.approveMilestone(1, 1);
-
-    vm.prank(client);
-    escrow.payMilestone(1, 1);
-
-    assertEq(
-        escrow.getPlatformBalance(),
-        0.015 ether
-    );
-}
-
-function testCannotExceedProjectBudgetWithMilestones()
-    public
-{
-    vm.prank(client);
-
-    escrow.createProject(
-        "Build Website",
-        "Create ecommerce website",
-        1 ether,
-        block.timestamp + 30 days
-    );
-
-    vm.prank(client);
-    escrow.createMilestone(
-        1,
-        "UI Design",
-        0.6 ether
-    );
-
-    vm.prank(client);
-    escrow.createMilestone(
-        1,
-        "Frontend",
-        0.4 ether
-    );
-
-    vm.expectRevert();
-
-    vm.prank(client);
-    escrow.createMilestone(
-        1,
-        "Backend",
-        0.1 ether
-    );
-}
-
-function testOwnerIsDeployer()
-    public
-{
-    assertEq(
-        escrow.getOwner(),
-        address(this)
-    );
-}
-
-function testWithdrawPlatformFees()
-    public
-{
-    vm.prank(client);
-    escrow.createProject(
-        "Website",
-        "Build website",
-        1 ether,
-        block.timestamp + 30 days
-    );
-
-    vm.prank(client);
-    escrow.createMilestone(
-        1,
-        "UI Design",
-        0.3 ether
-    );
-
-    vm.prank(freelancer);
-    escrow.acceptProject(1);
-
-    vm.prank(client);
-    escrow.fundProject{value: 1 ether}(1);
-
-    vm.prank(freelancer);
-    escrow.submitMilestone(1, 1);
-
-    vm.prank(client);
-    escrow.approveMilestone(1, 1);
-
-    vm.prank(client);
-    escrow.payMilestone(1, 1);
-
-    assertEq(
-        escrow.getPlatformBalance(),
-        0.015 ether
-    );
-
-    uint256 ownerBalanceBefore =
-    address(this).balance;
-    escrow.withdrawPlatformFees();
-    uint256 ownerBalanceAfter =
-    address(this).balance;
-    assertEq(
-        escrow.getPlatformBalance(),
-        0
-    );
-    assertEq(
-    ownerBalanceAfter,
-    ownerBalanceBefore + 0.015 ether
-);
-}
-
-function testOnlyOwnerCanWithdrawPlatformFees()
-    public
-{
-    vm.prank(client);
-    escrow.createProject(
-        "Website",
-        "Build website",
-        1 ether,
-        block.timestamp + 30 days
-    );
-
-    vm.prank(client);
-    escrow.createMilestone(
-        1,
-        "UI Design",
-        0.3 ether
-    );
-
-    vm.prank(freelancer);
-    escrow.acceptProject(1);
-
-    vm.prank(client);
-    escrow.fundProject{value: 1 ether}(1);
-
-    vm.prank(freelancer);
-    escrow.submitMilestone(1, 1);
-
-    vm.prank(client);
-    escrow.approveMilestone(1, 1);
-
-    vm.prank(client);
-    escrow.payMilestone(1, 1);
-
-    vm.expectRevert();
-
-    vm.prank(client);
-    escrow.withdrawPlatformFees();
-}
+        escrow.createProject(
+            "Build Website",
+            "Create ecommerce website",
+            1 ether,
+            block.timestamp + 30 days
+        );
 
+        vm.prank(client);
+        escrow.createMilestone(1, "UI Design", 0.6 ether);
+
+        vm.prank(client);
+        escrow.createMilestone(1, "Frontend", 0.4 ether);
+
+        vm.expectRevert();
+
+        vm.prank(client);
+        escrow.createMilestone(1, "Backend", 0.1 ether);
+    }
+
+
+    function testProjectAutoCompletesWhenAllMilestonesPaid() public {
+        _createAndFund();
+
+        vm.prank(client);
+        escrow.createMilestone(1, "UI Design", 0.3 ether);
+
+        vm.prank(client);
+        escrow.createMilestone(1, "Frontend", 0.4 ether);
+
+        vm.prank(freelancer);
+        escrow.acceptProject(1);
+
+        // milestone 1
+        vm.prank(freelancer);
+        escrow.submitMilestone(1, 1);
+        vm.prank(client);
+        escrow.approveMilestone(1, 1);
+        vm.prank(client);
+        escrow.payMilestone(1, 1);
+
+        ProjectTypes.Project memory project = escrow.getProject(1);
+        // this is atill Accepted — one milestone left
+        assertEq(uint256(project.status), uint256(ProjectTypes.ProjectStatus.Accepted));
+
+        // milestone 2
+        vm.prank(freelancer);
+        escrow.submitMilestone(1, 2);
+        vm.prank(client);
+        escrow.approveMilestone(1, 2);
+        vm.prank(client);
+        escrow.payMilestone(1, 2);
+
+        project = escrow.getProject(1);
+        // now it is completed — all milestones paid, so project done
+        assertEq(uint256(project.status), uint256(ProjectTypes.ProjectStatus.Completed));
+    }
+
+    // ============================================
+    // PLATFORM or OWNER TESTS
+    // ==============================
+
+
+    function testOwnerIsDeployer() public {
+        assertEq(
+            escrow.getOwner(),
+            address(this)
+        );
+    }
+
+    function testWithdrawPlatformFees() public {
+        _createAndFund();
+
+        vm.prank(client);
+        escrow.createMilestone(1, "UI Design", 0.3 ether);
+
+        vm.prank(freelancer);
+        escrow.acceptProject(1);
+
+        // vm.prank(client);
+        // escrow.fundProject{value: 1 ether}(1);
+
+        vm.prank(freelancer);
+        escrow.submitMilestone(1, 1);
+
+        vm.prank(client);
+        escrow.approveMilestone(1, 1);
+
+        vm.prank(client);
+        escrow.payMilestone(1, 1);
+
+        assertEq(
+            escrow.getPlatformBalance(),
+            0.015 ether
+        );
+
+        uint256 ownerBalanceBefore = address(this).balance;
+        escrow.withdrawPlatformFees();
+        uint256 ownerBalanceAfter = address(this).balance;
+
+        assertEq(escrow.getPlatformBalance(), 0);
+        assertEq(ownerBalanceAfter, ownerBalanceBefore + 0.015 ether);
+    }
+
+    function testOnlyOwnerCanWithdrawPlatformFees() public {
+        _createAndFund();
+
+        vm.prank(client);
+        escrow.createMilestone(1, "UI Design", 0.3 ether);
+
+        vm.prank(freelancer);
+        escrow.acceptProject(1);
+
+        // vm.prank(client);
+        // escrow.fundProject{value: 1 ether}(1);
+
+        vm.prank(freelancer);
+        escrow.submitMilestone(1, 1);
+
+        vm.prank(client);
+        escrow.approveMilestone(1, 1);
+
+        vm.prank(client);
+        escrow.payMilestone(1, 1);
+
+        vm.expectRevert();
+
+        vm.prank(client);
+        escrow.withdrawPlatformFees();
+    }
+
+    // ============================================
+    // DEADLINE BASED REFUND TEST
+    // ============================
+
+    function testRefundAfterDeadline() public {
+        _createAndFund();
+
+        vm.prank(freelancer);
+        escrow.acceptProject(1);
+
+        // warp past the deadline
+        vm.warp(block.timestamp + 31 days);
+
+        uint256 balanceBefore = client.balance;
+
+        vm.prank(client);
+        escrow.refundClient(1);
+
+        assertEq(client.balance, balanceBefore + 1 ether);
+    }
+
+    function testCannotRefundBeforeDeadline() public {
+        _createAndFund();
+
+        vm.prank(freelancer);
+        escrow.acceptProject(1);
+
+        // Deadline has NOT passed
+        vm.expectRevert();
+        vm.prank(client);
+        escrow.refundClient(1);
+    }
 
 }
