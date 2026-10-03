@@ -2,7 +2,7 @@
 pragma solidity ^0.8.24;
 
 /// @title EscrowErros
-/// @notice To handle all custom errors for the ChainEscrow contract coz it's more gas efficient 
+/// @notice To handle all custom errors for the ChainEscrow contract coz it is more gas efficient 
 library EscrowErrors {
     error ProjectDoesNotExist();
     error ProjectNotOpen();
