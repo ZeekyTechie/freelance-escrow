@@ -1,42 +1,53 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-<<<<<<< HEAD
-/// @title EscrowErros
-/// @notice To handle all custom errors for the ChainEscrow contract coz it's more gas efficient 
+/// @title EscrowErrors
+/// @notice All custom errors used by the escrow system
 library EscrowErrors {
+    // ---------- Project state ----------
     error ProjectDoesNotExist();
     error ProjectNotOpen();
     error ProjectNotAccepted();
-    error ProjectNotSubmitted();
-    error NotProjectClient();
-    error NotProjectFreelancer();
-    error DeadlineNotPassed();
-    error DeadlineAlreadyPassed();
-    error MustDepositBudget();
-    error TransferFailed();
-    error InvalidStatus();
-}
-=======
-// Stores all custom errors used throughout the escrow system
-library EscrowErrors {
+    error ProjectNotFunded();
+    error ProjectNotCancellable();
 
-    
-    error ProjectDoesNotExist();
-
-    // Project is not available for this action
-    error ProjectNotOpen();
-
-    // Only the client who created the project can perform this action
-    error NotProjectClient();
-
-    // Only the assigned freelancer can perform this action
-    error NotAssignedFreelancer();
-
-    // Budget must be greater than zero
+    // ---------- Project validation ----------
     error InvalidBudget();
-
-    // Incorrect ETH amount sent
+    error InvalidDeadline();
     error IncorrectFundingAmount();
+    error ClientCannotAcceptOwnProject();
+    error MilestonesNotFullyAllocated();
+
+    // ---------- Deadline ----------
+    error ProjectNotActive();
+    error DeadlineNotExtended();
+    error NoPendingExtension();
+    error CannotAcceptOwnProposal();
+
+    // ---------- Access control ----------
+    error NotProjectClient();
+    error NotAssignedFreelancer();
+    error NotProjectParticipant();
+
+    // ---------- Milestone state ----------
+    error MilestoneDoesNotExist();
+    error MilestoneNotPending();
+    error MilestoneNotSubmitted();
+    error MilestoneNotApproved();
+    error MilestoneNotDisputed();
+
+    // ---------- Milestone validation ----------
+    error InvalidMilestoneAmount();
+    error MilestoneBudgetExceeded();
+    error TooManyMilestones();
+    error ReviewPeriodNotElapsed();
+
+    // ---------- Ownership ----------
+    error RenounceOwnershipDisabled();
+
+    // ---------- Money ----------
+    error RefundNotAvailable();
+    error NoFundsAvailable();
+    error NoFeesAvailable();
+    error TransferFailed();
 }
->>>>>>> d05d2db7993a92a1cf09b1d558594d9d90b4ac57

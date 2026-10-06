@@ -1,22 +1,26 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-// Contains all milestone-related data structures
+/// @title MilestoneTypes
+/// @notice Data structures for project milestones
 library MilestoneTypes {
-
-    // Represents the current state of a milestone
+    /// @notice Lifecycle: Pending -> Submitted -> Approved -> Paid
+    /// @dev Submitted -> Disputed -> (Paid | Cancelled) when the client rejects the work.
+    ///      Pending -> Cancelled when unused funds are refunded after the deadline.
     enum MilestoneStatus {
         Pending,
         Submitted,
         Approved,
-        Paid
+        Paid,
+        Disputed,
+        Cancelled
     }
 
-    // Stores information about a project milestone
     struct Milestone {
         uint256 id;
         string title;
         uint256 amount;
         MilestoneStatus status;
+        uint256 submittedAt;
     }
 }
