@@ -1,21 +1,22 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-//Library containing all project-related data structures.
+/// @title ProjectTypes
+/// @notice Data structures for freelance projects
 library ProjectTypes {
-
-    // Represents the different stages a project can be in
+    /// @notice Lifecycle of a project: Open -> Accepted -> Funded -> Completed
+    /// @dev Open and Accepted projects can be Cancelled by the client.
+    ///      A Funded project becomes Cancelled only if it is fully refunded
+    ///      before any milestone was started.
     enum ProjectStatus {
         Open,
-        Funded,
         Accepted,
+        Funded,
         Submitted,
         Completed,
         Cancelled
     }
 
-
-    // Stores all important information about a freelance project
     struct Project {
         uint256 id;
         address client;

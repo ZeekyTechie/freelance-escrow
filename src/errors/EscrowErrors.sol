@@ -1,24 +1,53 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-// Stores all custom errors used throughout the escrow system
+/// @title EscrowErrors
+/// @notice All custom errors used by the escrow system
 library EscrowErrors {
-
-    
+    // ---------- Project state ----------
     error ProjectDoesNotExist();
-
-    // Project is not available for this action
     error ProjectNotOpen();
+    error ProjectNotAccepted();
+    error ProjectNotFunded();
+    error ProjectNotCancellable();
 
-    // Only the client who created the project can perform this action
-    error NotProjectClient();
-
-    // Only the assigned freelancer can perform this action
-    error NotAssignedFreelancer();
-
-    // Budget must be greater than zero
+    // ---------- Project validation ----------
     error InvalidBudget();
-
-    // Incorrect ETH amount sent
+    error InvalidDeadline();
     error IncorrectFundingAmount();
+    error ClientCannotAcceptOwnProject();
+    error MilestonesNotFullyAllocated();
+
+    // ---------- Deadline ----------
+    error ProjectNotActive();
+    error DeadlineNotExtended();
+    error NoPendingExtension();
+    error CannotAcceptOwnProposal();
+
+    // ---------- Access control ----------
+    error NotProjectClient();
+    error NotAssignedFreelancer();
+    error NotProjectParticipant();
+
+    // ---------- Milestone state ----------
+    error MilestoneDoesNotExist();
+    error MilestoneNotPending();
+    error MilestoneNotSubmitted();
+    error MilestoneNotApproved();
+    error MilestoneNotDisputed();
+
+    // ---------- Milestone validation ----------
+    error InvalidMilestoneAmount();
+    error MilestoneBudgetExceeded();
+    error TooManyMilestones();
+    error ReviewPeriodNotElapsed();
+
+    // ---------- Ownership ----------
+    error RenounceOwnershipDisabled();
+
+    // ---------- Money ----------
+    error RefundNotAvailable();
+    error NoFundsAvailable();
+    error NoFeesAvailable();
+    error TransferFailed();
 }

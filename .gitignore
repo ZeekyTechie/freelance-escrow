@@ -1,10 +1,14 @@
 # Compiler files
 cache/
 out/
+broadcast/
 
 # Commonly ignored directories
 .logs/
 .ignore/
+
+# Coverage
+lcov.info
 
 # Ignores development broadcast logs
 !/broadcast
@@ -18,3 +22,9 @@ docs/
 .env
 .env.*
 !.env.example
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
