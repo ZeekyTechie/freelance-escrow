@@ -12,7 +12,7 @@ library ProjectTypes {
         Open,
         Accepted,
         Funded,
-        Submitted,
+        // Submitted,
         Completed,
         Cancelled
     }
