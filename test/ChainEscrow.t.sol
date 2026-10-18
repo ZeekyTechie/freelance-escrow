@@ -10,6 +10,7 @@ import {EscrowConstants} from "../src/constants/EscrowConstants.sol";
 import {EscrowErrors} from "../src/errors/EscrowErrors.sol";
 import {ProjectTypes} from "../src/types/ProjectTypes.sol";
 import {MilestoneTypes} from "../src/types/MilestoneTypes.sol";
+import {DeployChainEscrow} from "../script/Deploy.s.sol";
 
 /// @dev Shared setup and helpers. The test contract is the deployer, so it is the owner.
 abstract contract BaseTest is Test {
@@ -1294,3 +1295,15 @@ contract OwnershipTest is BaseTest {
         escrow.acceptOwnership();
     }
 }
+contract DeployScriptTest is Test {
+    function testDeployScriptDeploysEscrow() public {
+        DeployChainEscrow deployer = new DeployChainEscrow();
+        ChainEscrow deployed = deployer.run();
+
+        assertTrue(address(deployed) != address(0));
+        assertGt(address(deployed).code.length, 0);
+        assertTrue(deployed.owner() != address(0));
+        assertEq(deployed.getProjectCount(), 0);
+    }
+}
+
